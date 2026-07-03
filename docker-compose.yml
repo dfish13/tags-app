@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tags}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tags}
+      POSTGRES_DB: ${POSTGRES_DB:-tags}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Localhost only — Postgres is reached by the api container over the
+    # compose network; the published port is just for local admin/psql.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tags}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-tags}:${POSTGRES_PASSWORD:-tags}@db:5432/${POSTGRES_DB:-tags}
+      PORT: 3001
+      # Comma-separated admin allowlist seeded on boot (see .env / .env.example).
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+    # Bind to localhost only — the API must be reachable ONLY via the
+    # cloudflared tunnel, never directly from the LAN, or the
+    # Cf-Access-Authenticated-User-Email header could be spoofed to bypass
+    # admin auth. (Port 3000 is taken by Grafana on the Pi.)
+    ports:
+      - "127.0.0.1:3001:3001"
+
+volumes:
+  db-data:

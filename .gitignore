@@ -1,0 +1,19 @@
+# Secrets — never commit
+.env
+.env.local
+*.local
+
+# Dependencies / build output
+node_modules/
+dist/
+
+# Logs
+*.log
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+
+# Claude Code local settings (keep launch.json, ignore local overrides)
+.claude/settings.local.json

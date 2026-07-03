@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#042a2b">
+<title>Tags Round</title>
+<style>
+  :root {
+    /* Palette: evergreen / pacific-blue / neon-ice / white / banana-cream */
+    --evergreen: #042a2b;
+    --pacific-blue: #5eb1bf;
+    --neon-ice: #54f2f2;
+    --banana-cream: #f4e04d;
+
+    --green: #042a2b;          /* primary (header, buttons) -> evergreen */
+    --green-dark: #021819;     /* darker evergreen for active/pressed */
+    --bg: #eef3f3;             /* soft tint of white toward pacific-blue */
+    --card: #fcfcfc;           /* white */
+    --line: #d7e2e2;
+    --text: #042a2b;           /* evergreen for body text */
+    --muted: #5b7374;
+    --danger: #c0392b;         /* kept: destructive actions need red */
+    --accent: #f4e04d;         /* banana-cream (ACE, tag output, tab underline) */
+    --blue: #5eb1bf;           /* pacific-blue (CTP) */
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 17px;
+    line-height: 1.4;
+    padding-bottom: 90px;
+  }
+  header {
+    background: var(--green);
+    color: #fff;
+    padding: 14px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    box-shadow: 0 2px 6px rgba(0,0,0,.15);
+  }
+  header h1 { margin: 0; font-size: 19px; font-weight: 700; }
+  header .sub { font-size: 13px; opacity: .85; margin-top: 2px; }
+
+  .tabs {
+    display: flex;
+    background: var(--green-dark);
+  }
+  .tabs button {
+    flex: 1;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,.6);
+    padding: 11px 4px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+  }
+  .tabs button.active { color: #fff; border-bottom-color: var(--accent); }
+  .tabs button:disabled { opacity: .35; }
+  .tabs.subtabs { background: var(--green); }
+  .tabs.subtabs button { font-size: 12px; padding: 9px 4px; }
+
+  main { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .card h2 { margin: 0 0 10px; font-size: 16px; }
+
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; font-weight: 600; }
+  input[type=text], input[type=number] {
+    width: 100%;
+    padding: 12px;
+    font-size: 17px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #fff;
+  }
+  input:focus { outline: 2px solid var(--green); border-color: var(--green); }
+  textarea {
+    width: 100%; min-height: 90px; padding: 12px; font-size: 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    resize: vertical; margin-top: 4px;
+  }
+  textarea:focus { outline: 2px solid var(--green); border-color: var(--green); }
+
+  /* Typeahead / autocomplete for roster player names */
+  .typeahead { position: relative; }
+  .suggestions {
+    position: absolute; left: 0; right: 0; top: 100%;
+    z-index: 20; margin-top: 4px;
+    background: #fff; border: 1px solid var(--line); border-radius: 9px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.12);
+    max-height: 240px; overflow-y: auto;
+  }
+  .suggestions .sug {
+    padding: 12px; font-size: 16px; cursor: pointer;
+    border-bottom: 1px solid var(--line);
+  }
+  .suggestions .sug:last-child { border-bottom: none; }
+  .suggestions .sug.active, .suggestions .sug:hover { background: #dff0f2; }
+  .suggestions .sug .match { font-weight: 800; color: var(--green); }
+  .suggestions .none { padding: 12px; font-size: 14px; color: var(--muted); }
+  .name-locked { color: var(--green); font-size: 12px; font-weight: 700; margin-top: 4px; }
+
+  /* Inline roster edit panel */
+  .row-edit {
+    border: 1.5px solid var(--green); border-radius: 10px;
+    padding: 10px 12px 12px; margin-bottom: 10px; background: #f7fbfb;
+  }
+  /* Expanded round-history detail */
+  .hist-detail {
+    padding: 6px 4px 10px 4px; margin-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .checks { display: flex; gap: 18px; margin-top: 12px; }
+  .checks label {
+    display: flex; align-items: center; gap: 7px;
+    margin: 0; font-size: 15px; color: var(--text);
+  }
+  .checks input { width: 22px; height: 22px; accent-color: var(--green); }
+
+  button.btn {
+    width: 100%;
+    padding: 14px;
+    font-size: 17px;
+    font-weight: 700;
+    border: none;
+    border-radius: 10px;
+    background: var(--green);
+    color: #fff;
+    cursor: pointer;
+    margin-top: 14px;
+  }
+  button.btn:active { background: var(--green-dark); }
+  button.btn.secondary { background: #fff; color: var(--green); border: 1.5px solid var(--green); }
+  button.btn.danger { background: #fff; color: var(--danger); border: 1.5px solid var(--danger); }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 4px;
+    border-bottom: 1px solid var(--line);
+  }
+  .row:last-child { border-bottom: none; }
+  .row .num {
+    min-width: 42px; height: 42px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--green); color: #fff;
+    border-radius: 9px; font-weight: 700; font-size: 16px;
+    flex-shrink: 0;
+  }
+  .row .name { flex: 1; font-weight: 600; }
+  .row .meta { font-size: 12px; color: var(--muted); }
+  .row .badges { font-size: 11px; font-weight: 800; }
+  .badge-ace, .badge-ctp {
+    display: inline-block; border-radius: 5px; padding: 1px 6px; letter-spacing: .3px;
+  }
+  .badge-ace { background: var(--accent); color: #4a3500; }
+  .badge-ctp { background: var(--blue); color: #042a2b; }
+  .row .score-in { width: 80px; }
+  .row .x {
+    background: none; border: none; color: var(--danger);
+    font-size: 22px; cursor: pointer; padding: 4px 8px;
+  }
+  .linkbtn {
+    background: none; border: none; color: var(--green);
+    font-size: 14px; font-weight: 700; cursor: pointer; padding: 4px 0;
+  }
+  .row.selectable { cursor: pointer; }
+  .row.selected { background: #fbecea; border-radius: 8px; }
+  .row .sel-check { width: 24px; height: 24px; accent-color: var(--danger); flex-shrink: 0; pointer-events: none; }
+  #removeBar { margin-top: 6px; }
+
+  .pill {
+    display: inline-block; background: #dff0f2; color: var(--green-dark);
+    border-radius: 20px; padding: 4px 11px; font-size: 13px; font-weight: 600;
+    margin: 3px 4px 0 0;
+  }
+  .empty { color: var(--muted); text-align: center; padding: 24px 0; font-size: 15px; }
+  .totals { display: flex; gap: 12px; margin-top: 4px; }
+  .totals .box {
+    flex: 1; background: #dff0f2; border-radius: 10px; padding: 10px; text-align: center;
+  }
+  .totals .box .big { font-size: 22px; font-weight: 800; color: var(--green-dark); }
+  .totals .box .lbl { font-size: 12px; color: var(--muted); }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .tie-flag {
+    font-size: 10px; font-weight: 800; letter-spacing: .3px;
+    background: var(--accent); color: #4a3500;
+    border-radius: 4px; padding: 1px 5px; vertical-align: middle;
+  }
+  .result-row .tag-out {
+    min-width: 50px; height: 44px;
+    display:flex;align-items:center;justify-content:center;
+    background: var(--accent); color: #4a3500;
+    border-radius: 9px; font-weight: 800; font-size: 18px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🥏 Tags League</h1>
+  <div class="sub" id="phaseSub">League home</div>
+</header>
+<!-- Top-level navigation between the two main views + admin -->
+<div class="tabs" id="topnav">
+  <button id="nav-home" onclick="location.hash='#/'">Home</button>
+  <button id="nav-round" onclick="location.hash='#/round'">Play</button>
+  <button id="nav-admin" onclick="location.hash='#/admin'">Admin</button>
+</div>
+<!-- Round workflow sub-steps (only shown within the Round view) -->
+<div class="tabs subtabs" id="roundtabs" style="display:none">
+  <button id="tab-setup" class="active" onclick="goStep('setup')">1 · Setup</button>
+  <button id="tab-scores" onclick="goStep('scores')">2 · Scores</button>
+  <button id="tab-results" onclick="goStep('results')">3 · Results</button>
+</div>
+
+<main>
+  <!-- LEAGUE HOME -->
+  <section id="view-home" style="display:none">
+    <div class="card">
+      <h2>Current tag standings</h2>
+      <p class="hint">Who holds each tag right now, updated after every finalized round.</p>
+      <div id="standingsList"><div class="empty">Loading…</div></div>
+    </div>
+
+    <div class="card">
+      <h2 id="historyTitle">Round history</h2>
+      <p class="hint" id="historyHint">Past finalized rounds. Tap one to see its tag assignments.</p>
+      <div id="historyList"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- SETUP -->
+  <section id="view-setup">
+    <div class="card">
+      <h2>Round details</h2>
+      <label for="rCourse">Course (optional)</label>
+      <input type="text" id="rCourse" autocomplete="off" placeholder="e.g. Maple Hill"
+        onchange="setCourse(this.value)">
+    </div>
+
+    <div class="card">
+      <h2>Add player</h2>
+      <label for="pName">Name</label>
+      <div class="typeahead">
+        <input type="text" id="pName" autocomplete="off" placeholder="Start typing a roster name…"
+          oninput="onNameInput()" onkeydown="onNameKey(event)" onblur="onNameBlur()">
+        <div id="suggestions" class="suggestions" style="display:none"></div>
+      </div>
+      <div id="nameLocked" class="name-locked" style="display:none"></div>
+      <p class="hint">Only players on the roster can be added. Manage the roster in the Admin tab.</p>
+      <label for="pTag">Incoming tag number (1–300)</label>
+      <input type="number" id="pTag" inputmode="numeric" min="1" max="300" placeholder="e.g. 42">
+      <div class="checks">
+        <label><input type="checkbox" id="pAce"> Ace pool ($1)</label>
+        <label><input type="checkbox" id="pCtp"> CTP ($1)</label>
+      </div>
+      <button class="btn" onclick="addPlayer()">Add player</button>
+    </div>
+
+    <div class="card">
+      <h2 style="display:flex;align-items:center;justify-content:space-between">
+        <span>Players (<span id="count">0</span>)</span>
+        <button id="removeModeBtn" class="linkbtn" onclick="toggleRemoveMode()">Remove…</button>
+      </h2>
+      <div id="playerList"></div>
+      <div id="removeBar" style="display:none">
+        <button class="btn danger" id="confirmRemoveBtn" onclick="confirmRemove()">Remove selected (0)</button>
+        <button class="btn secondary" onclick="toggleRemoveMode()">Cancel</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Pools</h2>
+      <div class="totals">
+        <div class="box"><div class="big" id="aceTotal">$0</div><div class="lbl">Ace pool</div></div>
+        <div class="box"><div class="big" id="ctpTotal">$0</div><div class="lbl">CTP</div></div>
+      </div>
+    </div>
+
+    <button class="btn danger" onclick="resetRound()">Reset round</button>
+  </section>
+
+  <!-- SCORES -->
+  <section id="view-scores" style="display:none">
+    <div class="card">
+      <h2>Enter scores</h2>
+      <p class="hint">Enter each player's total score after the round. Leave blank if not finished.</p>
+      <div id="scoreList"></div>
+    </div>
+    <button class="btn" onclick="goStep('results')">View results →</button>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="view-results" style="display:none">
+    <div class="card">
+      <h2 id="resultsTitle">Tag assignment — preview</h2>
+      <p class="hint" id="resultsHint">Lowest score gets the lowest incoming tag. Ties: better incoming tag wins. This is a preview until you finalize.</p>
+      <div id="resultsList"></div>
+      <button class="btn" id="finalizeBtn" onclick="finalizeRound()">Finalize &amp; save round</button>
+      <div id="finalizeMsg" class="hint" style="display:none"></div>
+    </div>
+
+    <!-- Export for approval: when no admin is present to finalize live -->
+    <div class="card" id="exportCard">
+      <h2>No admin present?</h2>
+      <p class="hint">Export this round to send to an admin for review and finalizing. They paste it in the Admin tab.</p>
+      <button class="btn secondary" id="exportBtn" onclick="exportRound()">Export round for approval</button>
+      <textarea id="exportOut" readonly style="display:none"></textarea>
+      <button class="btn" id="copyExportBtn" style="display:none" onclick="copyExport()">Copy to clipboard</button>
+      <div id="exportMsg" class="hint" style="display:none"></div>
+    </div>
+    <div class="card">
+      <h2>Pools</h2>
+      <div class="totals">
+        <div class="box"><div class="big" id="aceTotal2">$0</div><div class="lbl">Ace pool</div></div>
+        <div class="box"><div class="big" id="ctpTotal2">$0</div><div class="lbl">CTP</div></div>
+      </div>
+      <label>Ace pool opt-ins</label>
+      <div id="aceList"></div>
+      <label>CTP opt-ins</label>
+      <div id="ctpList"></div>
+    </div>
+  </section>
+
+  <!-- ADMIN -->
+  <section id="view-admin" style="display:none">
+    <!-- Auth status: shown when signed OUT -->
+    <div class="card" id="authCard" style="display:none">
+      <h2>Admin sign-in</h2>
+      <p class="hint">Editing the roster requires admin access. Sign in to continue — everyone can still view the roster below without signing in.</p>
+      <button class="btn" id="signInBtn" onclick="adminSignIn()">Sign in as admin</button>
+    </div>
+
+    <!-- Add form: shown when signed IN -->
+    <div class="card" id="addCard" style="display:none">
+      <h2 style="display:flex;align-items:center;justify-content:space-between">
+        <span>Add player to roster</span>
+        <button class="linkbtn" onclick="adminSignOut()">Sign out</button>
+      </h2>
+      <p class="hint">Signed in as <span id="adminWho">…</span>. Adds a player to the permanent league roster.</p>
+      <label for="aName">Name</label>
+      <input type="text" id="aName" autocomplete="off" placeholder="Player name">
+      <label for="aTag">Tag number (1–300)</label>
+      <input type="number" id="aTag" inputmode="numeric" min="1" max="300" placeholder="e.g. 42">
+      <p class="hint">The player's current tag — their existing one, or a new number being issued.</p>
+      <button class="btn" id="aAddBtn" onclick="adminAddPlayer()">Add player</button>
+      <div id="aMsg" class="hint" style="display:none"></div>
+    </div>
+
+    <!-- Import a round exported by a non-admin, for review + finalizing -->
+    <div class="card" id="importCard" style="display:none">
+      <h2>Import a round for approval</h2>
+      <p class="hint">Paste an exported round below. It loads into the Play tab where you can review, edit, and finalize it.</p>
+      <textarea id="importIn" placeholder="Paste exported round text here…"></textarea>
+      <button class="btn" id="importBtn" onclick="importRound()">Load round for review</button>
+      <div id="importMsg" class="hint" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <h2>Roster (<span id="rosterCount">0</span>)</h2>
+      <div id="rosterList"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const KEY = 'tags-round-v1';
+let state = load();
+
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY));
+    if (s && Array.isArray(s.players)) {
+      if (typeof s.course !== 'string') s.course = '';
+      if (!('finalized' in s)) s.finalized = null; // server result once finalized
+      return s;
+    }
+  } catch (e) {}
+  return { players: [], course: '', finalized: null };
+}
+function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+
+function setCourse(v) { state.course = String(v || '').trim(); save(); }
+
+function nextId() {
+  const max = state.players.reduce((m, p) => Math.max(m, p.id || 0), 0);
+  return max + 1;
+}
+
+// ─── Routing ──────────────────────────────────────────────
+// Two top-level views via hash routes: #/ = League Home, #/round = the round
+// workflow (Setup/Scores/Results sub-steps), #/admin = roster admin.
+let route = 'home';    // 'home' | 'round' | 'admin'
+let step = 'setup';    // active round sub-step when route === 'round'
+
+const ALL_SECTIONS = ['home','setup','scores','results','admin'];
+
+function showSection(id) {
+  for (const s of ALL_SECTIONS) {
+    document.getElementById('view-'+s).style.display = (s===id) ? '' : 'none';
+  }
+}
+
+// Parse location.hash → apply the route. Called on load and hashchange.
+function router() {
+  const h = location.hash || '#/';
+  if (h.startsWith('#/round')) route = 'round';
+  else if (h.startsWith('#/admin')) route = 'admin';
+  else route = 'home';
+
+  // Top-nav active state
+  document.getElementById('nav-home').classList.toggle('active', route==='home');
+  document.getElementById('nav-round').classList.toggle('active', route==='round');
+  document.getElementById('nav-admin').classList.toggle('active', route==='admin');
+
+  // Round sub-tabs only visible inside the round view
+  document.getElementById('roundtabs').style.display = (route==='round') ? '' : 'none';
+
+  const subs = { home:'League home', round:'Play — run a round', admin:'Admin — manage roster' };
+  document.getElementById('phaseSub').textContent = subs[route];
+
+  if (route === 'home') {
+    showSection('home');
+    loadStandings();
+    loadHistory();
+  } else if (route === 'admin') {
+    showSection('admin');
+    refreshAdminAuth();
+    loadRoster();
+  } else {
+    // round: show the active step
+    goStep(step);
+  }
+  render();
+}
+
+// Switch the active round sub-step (Setup/Scores/Results).
+function goStep(s) {
+  step = s;
+  showSection(s);
+  for (const x of ['setup','scores','results']) {
+    document.getElementById('tab-'+x).classList.toggle('active', x===s);
+  }
+  if (s === 'setup') { loadRosterForSetup(); document.getElementById('rCourse').value = state.course || ''; }
+  render();
+}
+
+function addPlayer() {
+  const name = document.getElementById('pName').value.trim();
+  const tag = parseInt(document.getElementById('pTag').value, 10);
+  const ace = document.getElementById('pAce').checked;
+  const ctp = document.getElementById('pCtp').checked;
+
+  if (!name) { alert('Enter a name.'); return; }
+
+  // Constraint: only players on the DB roster can be added to a round.
+  // Match the typed name against the roster (case-insensitive, exact).
+  const match = roster.find(r => r.name.toLowerCase() === name.toLowerCase());
+  if (!match) {
+    alert('“' + name + '” is not on the roster. Pick a suggested name, or add them in the Admin tab first.');
+    return;
+  }
+  if (state.players.some(p => p.rosterId === match.id)) {
+    alert(match.name + ' is already in this round.');
+    return;
+  }
+  if (!(tag >= 1 && tag <= 300)) { alert('Tag must be a number from 1 to 300.'); return; }
+  if (state.players.some(p => p.tag === tag)) { alert('Tag #' + tag + ' is already taken.'); return; }
+
+  state.players.push({ id: nextId(), rosterId: match.id, name: match.name, tag, ace, ctp, score: null });
+  save();
+
+  clearNameField();
+  document.getElementById('pTag').value = '';
+  document.getElementById('pAce').checked = false;
+  document.getElementById('pCtp').checked = false;
+  document.getElementById('pName').focus();
+  render();
+}
+
+// ─── Roster typeahead ─────────────────────────────────────
+let roster = [];           // cached DB roster [{id, name}]
+let sugItems = [];         // current suggestion list
+let sugActive = -1;        // keyboard-highlighted index
+
+async function loadRosterForSetup() {
+  try {
+    const res = await fetch(API_BASE + '/players');
+    if (res.ok) roster = await res.json();
+  } catch (e) { /* offline — roster stays as last cache */ }
+}
+
+function onNameInput() {
+  const q = document.getElementById('pName').value.trim().toLowerCase();
+  document.getElementById('nameLocked').style.display = 'none';
+  if (!q) { hideSuggestions(); return; }
+  sugItems = roster
+    .filter(r => r.name.toLowerCase().includes(q))
+    .slice(0, 8);
+  sugActive = -1;
+  renderSuggestions(q);
+}
+
+function renderSuggestions(q) {
+  const box = document.getElementById('suggestions');
+  if (sugItems.length === 0) {
+    box.innerHTML = '<div class="none">No roster match. Add them in the Admin tab first.</div>';
+  } else {
+    box.innerHTML = sugItems.map((r, i) => {
+      const idx = r.name.toLowerCase().indexOf(q);
+      const html = idx < 0 ? esc(r.name)
+        : esc(r.name.slice(0, idx)) + '<span class="match">' +
+          esc(r.name.slice(idx, idx + q.length)) + '</span>' + esc(r.name.slice(idx + q.length));
+      return `<div class="sug ${i===sugActive?'active':''}" onmousedown="pickSuggestion(${i})">${html}</div>`;
+    }).join('');
+  }
+  box.style.display = '';
+}
+
+function hideSuggestions() {
+  document.getElementById('suggestions').style.display = 'none';
+  sugItems = []; sugActive = -1;
+}
+
+function pickSuggestion(i) {
+  const r = sugItems[i];
+  if (!r) return;
+  const input = document.getElementById('pName');
+  input.value = r.name;
+  hideSuggestions();
+  const lock = document.getElementById('nameLocked');
+  lock.textContent = '✓ ' + r.name + ' (roster)';
+  lock.style.display = '';
+  document.getElementById('pTag').focus();
+}
+
+function onNameKey(e) {
+  if (document.getElementById('suggestions').style.display === 'none') {
+    if (e.key === 'Enter') { e.preventDefault(); addPlayer(); }
+    return;
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault(); sugActive = Math.min(sugActive + 1, sugItems.length - 1);
+    renderSuggestions(document.getElementById('pName').value.trim().toLowerCase());
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault(); sugActive = Math.max(sugActive - 1, 0);
+    renderSuggestions(document.getElementById('pName').value.trim().toLowerCase());
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (sugActive >= 0) pickSuggestion(sugActive);
+    else if (sugItems.length === 1) pickSuggestion(0);
+    else addPlayer();
+  } else if (e.key === 'Escape') {
+    hideSuggestions();
+  }
+}
+
+function onNameBlur() {
+  // Delay so a mousedown on a suggestion registers before we hide.
+  setTimeout(hideSuggestions, 150);
+}
+
+function clearNameField() {
+  document.getElementById('pName').value = '';
+  document.getElementById('nameLocked').style.display = 'none';
+  hideSuggestions();
+}
+
+let removeMode = false;
+let selectedToRemove = new Set();
+
+function toggleRemoveMode() {
+  removeMode = !removeMode;
+  selectedToRemove.clear();
+  render();
+}
+
+function toggleSelect(id) {
+  if (selectedToRemove.has(id)) selectedToRemove.delete(id);
+  else selectedToRemove.add(id);
+  render();
+}
+
+function confirmRemove() {
+  const n = selectedToRemove.size;
+  if (n === 0) { toggleRemoveMode(); return; }
+  if (!confirm('Remove ' + n + ' player' + (n>1?'s':'') + '?')) return;
+  state.players = state.players.filter(p => !selectedToRemove.has(p.id));
+  save();
+  removeMode = false;
+  selectedToRemove.clear();
+  render();
+}
+
+function setScore(id, val) {
+  const p = state.players.find(p => p.id === id);
+  if (!p) return;
+  const n = val.trim() === '' ? null : parseInt(val, 10);
+  p.score = (n !== null && !isNaN(n)) ? n : null;
+  save();
+}
+
+function resetRound() {
+  if (!confirm('Clear all players and start a new round?')) return;
+  state = { players: [], course: '', finalized: null };
+  save();
+  document.getElementById('rCourse').value = '';
+  goStep('setup');
+}
+
+function poolTotals() {
+  return {
+    ace: state.players.filter(p => p.ace).length,
+    ctp: state.players.filter(p => p.ctp).length
+  };
+}
+
+// Sort players by score (asc), ties broken by lower incoming tag.
+// DNF players (no score) are ranked last, ordered among themselves by incoming tag.
+function rankedPlayers() {
+  const withScore = state.players.filter(p => p.score !== null);
+  const dnf = state.players.filter(p => p.score === null);
+  withScore.sort((a, b) => a.score - b.score || a.tag - b.tag);
+  dnf.sort((a, b) => a.tag - b.tag);
+  return { withScore, dnf, all: withScore.concat(dnf) };
+}
+
+function computeResults() {
+  const { all, dnf } = rankedPlayers();
+  const pool = state.players.map(p => p.tag).sort((a, b) => a - b);
+  // detect ties (same, non-null score) for flagging
+  const rows = all.map((p, i) => {
+    const isDnf = p.score === null;
+    const tie = !isDnf && all.some((q, j) => j !== i && q.score === p.score);
+    return { player: p, assigned: pool[i], tie, dnf: isDnf };
+  });
+  return { rows, dnfCount: dnf.length };
+}
+
+function render() {
+  const t = poolTotals();
+  document.getElementById('aceTotal').textContent = '$' + t.ace;
+  document.getElementById('ctpTotal').textContent = '$' + t.ctp;
+  document.getElementById('count').textContent = state.players.length;
+
+  // setup list
+  const pl = document.getElementById('playerList');
+  if (state.players.length === 0) {
+    pl.innerHTML = '<div class="empty">No players yet. Add the first one above.</div>';
+  } else {
+    pl.innerHTML = state.players.map(p => {
+      const sel = selectedToRemove.has(p.id);
+      const info = `
+        <div style="flex:1">
+          <div class="name">${esc(p.name)}</div>
+          <div class="badges">${p.ace?'<span class="badge-ace">ACE</span> ':''}${p.ctp?'<span class="badge-ctp">CTP</span>':''}</div>
+        </div>`;
+      if (removeMode) {
+        return `
+      <div class="row selectable ${sel?'selected':''}" onclick="toggleSelect(${p.id})">
+        <input type="checkbox" class="sel-check" ${sel?'checked':''}>
+        <div class="num">${p.tag}</div>${info}
+      </div>`;
+      }
+      return `
+      <div class="row">
+        <div class="num">${p.tag}</div>${info}
+      </div>`;
+    }).join('');
+  }
+
+  // remove-mode UI
+  const removeBar = document.getElementById('removeBar');
+  const removeBtn = document.getElementById('removeModeBtn');
+  if (state.players.length === 0 && !removeMode) {
+    removeBtn.style.display = 'none';
+  } else {
+    removeBtn.style.display = '';
+  }
+  removeBtn.textContent = removeMode ? 'Done' : 'Remove…';
+  removeBar.style.display = removeMode ? '' : 'none';
+  document.getElementById('confirmRemoveBtn').textContent =
+    'Remove selected (' + selectedToRemove.size + ')';
+
+  // scores list
+  const sl = document.getElementById('scoreList');
+  if (state.players.length === 0) {
+    sl.innerHTML = '<div class="empty">Add players in Setup first.</div>';
+  } else {
+    sl.innerHTML = state.players.map(p => `
+      <div class="row">
+        <div class="num">${p.tag}</div>
+        <div class="name">${esc(p.name)}</div>
+        <input class="score-in" type="number" inputmode="numeric" placeholder="score"
+          value="${p.score===null?'':p.score}"
+          onchange="setScore(${p.id}, this.value)">
+      </div>`).join('');
+  }
+
+  // results
+  document.getElementById('aceTotal2').textContent = '$' + t.ace;
+  document.getElementById('ctpTotal2').textContent = '$' + t.ctp;
+  const aceNames = state.players.filter(p => p.ace).map(p => `<span class="pill">${esc(p.name)}</span>`).join('') || '<span class="hint">None</span>';
+  const ctpNames = state.players.filter(p => p.ctp).map(p => `<span class="pill">${esc(p.name)}</span>`).join('') || '<span class="hint">None</span>';
+  document.getElementById('aceList').innerHTML = aceNames;
+  document.getElementById('ctpList').innerHTML = ctpNames;
+
+  const rl = document.getElementById('resultsList');
+  const title = document.getElementById('resultsTitle');
+  const hint = document.getElementById('resultsHint');
+  const finalizeBtn = document.getElementById('finalizeBtn');
+
+  if (state.finalized) {
+    // Finalized: show the server's authoritative assignments.
+    title.textContent = 'Tag assignment — final';
+    hint.textContent = state.finalized.course
+      ? 'Finalized · ' + esc(state.finalized.course)
+      : 'Finalized and saved to the server.';
+    finalizeBtn.style.display = 'none';
+    const fr = state.finalized.rows;
+    rl.innerHTML = fr.map(r => `
+      <div class="row result-row">
+        <div class="tag-out">#${r.assignedNumber}</div>
+        <div style="flex:1">
+          <div class="name">${esc(r.name)} ${r.dnf?'<span class="tie-flag">DNF</span>':''}</div>
+          <div class="meta">${r.dnf?'No score':'Score '+r.score} · brought #${r.incomingNumber}</div>
+        </div>
+      </div>`).join('');
+    return;
+  }
+
+  // Not finalized: local preview.
+  title.textContent = 'Tag assignment — preview';
+  hint.textContent = 'Lowest score gets the lowest incoming tag. Ties: better incoming tag wins. This is a preview until you finalize.';
+  const { rows, dnfCount } = computeResults();
+  if (rows.length === 0) {
+    rl.innerHTML = '<div class="empty">No players yet. Add players in step 1.</div>';
+    finalizeBtn.style.display = 'none';
+  } else {
+    finalizeBtn.style.display = '';
+    rl.innerHTML = rows.map((r) => `
+      <div class="row result-row">
+        <div class="tag-out">#${r.assigned}</div>
+        <div style="flex:1">
+          <div class="name">${esc(r.player.name)} ${r.tie?'<span class="tie-flag">TIE</span>':''}${r.dnf?'<span class="tie-flag">DNF</span>':''}</div>
+          <div class="meta">${r.dnf?'No score':'Score '+r.player.score} · brought #${r.player.tag}</div>
+        </div>
+      </div>`).join('') +
+      (dnfCount ? `<div class="hint" style="margin-top:10px">${dnfCount} player(s) with no score received the highest tags.</div>` : '');
+  }
+}
+
+// ─── API (persistent roster) ──────────────────────────────
+// Same-origin '/api' when served from the site; fall back to the full
+// host when opened as a local file (file:// has no origin to resolve).
+const SITE_ORIGIN = location.protocol === 'file:'
+  ? 'https://tags.duncanfish.co'
+  : location.origin;
+const API_BASE = SITE_ORIGIN + '/api';
+
+// Cloudflare Access sign-in state. Because Access gates /api/admin/* with a
+// cross-origin 302 to the login page, a background fetch() can't follow it
+// (it rejects with "Failed to fetch"). So we detect login state up front and
+// route the user through a full-page navigation to log in, rather than
+// letting an admin fetch fail confusingly.
+let adminEmail = null;
+
+// Ask Cloudflare who we are. /cdn-cgi/access/get-identity returns 200 + JSON
+// (with the email) when an Access session cookie is present, else 401/403.
+async function fetchAdminIdentity() {
+  try {
+    const res = await fetch(SITE_ORIGIN + '/cdn-cgi/access/get-identity', {
+      credentials: 'include'
+    });
+    if (!res.ok) return null;
+    const id = await res.json();
+    return id.email || id.name || null;
+  } catch (e) {
+    return null; // no Access in front (e.g. local preview) → treat as signed out
+  }
+}
+
+// Refresh the Admin tab's auth UI: show the sign-in card or the add form.
+async function refreshAdminAuth() {
+  adminEmail = await fetchAdminIdentity();
+  const authCard = document.getElementById('authCard');
+  const addCard = document.getElementById('addCard');
+  const importCard = document.getElementById('importCard');
+  if (adminEmail) {
+    document.getElementById('adminWho').textContent = adminEmail;
+    authCard.style.display = 'none';
+    addCard.style.display = '';
+    importCard.style.display = '';
+  } else {
+    authCard.style.display = '';
+    addCard.style.display = 'none';
+    importCard.style.display = 'none';
+  }
+}
+
+// Log in by navigating the whole page into the Access-protected path. Cloudflare
+// redirects to the PIN login, then back to the app via redirect_url.
+function adminSignIn() {
+  // Navigate to the Access-protected /api/admin/login landing route. Cloudflare
+  // intercepts with the PIN login; after auth, the API's /login handler
+  // redirects back to '/#/admin' so the user lands on the Admin view, signed in.
+  location.href = SITE_ORIGIN + '/api/admin/login';
+}
+
+// Sign out of Cloudflare Access by clearing the session cookie via its logout
+// endpoint, then return to the Admin view. Mostly for testing, but handy.
+function adminSignOut() {
+  location.href = SITE_ORIGIN + '/cdn-cgi/access/logout?returnTo=' +
+    encodeURIComponent(SITE_ORIGIN + '/#/admin');
+}
+
+// ─── Finalize: push the local round to the API and lock in server results ──
+// Setup + Scores stay local; only here do we persist. Steps: map tag numbers
+// to tag-table ids, create the round, add each entry, then finalize. The
+// finalize response carries the server's authoritative assigned tags, which
+// become the displayed results.
+async function finalizeRound() {
+  const btn = document.getElementById('finalizeBtn');
+  if (state.players.length === 0) { showFinalizeMsg('Add players first.', true); return; }
+  if (!confirm('Finalize this round? Tag assignments will be saved to the server and locked.')) return;
+
+  // Must be signed in as admin (finalize is a write route).
+  const who = await fetchAdminIdentity();
+  if (!who) { showFinalizeMsg('Admin sign-in required — redirecting…', true); setTimeout(adminSignIn, 800); return; }
+
+  btn.disabled = true;
+  showFinalizeMsg('Saving…', false);
+  try {
+    // 1) Map incoming tag numbers → tag-table ids.
+    const tagsRes = await fetch(API_BASE + '/tags', { credentials: 'include' });
+    if (!tagsRes.ok) throw new Error('Could not load tags (HTTP ' + tagsRes.status + ')');
+    const allTags = await tagsRes.json();
+    const numToId = new Map(allTags.map(t => [t.number, t.id]));
+    const idToNum = new Map(allTags.map(t => [t.id, t.number]));
+    for (const p of state.players) {
+      if (!numToId.has(p.tag)) throw new Error('Tag #' + p.tag + ' does not exist on the server.');
+    }
+
+    // 2) Create the round.
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const roundRes = await postAdmin('/admin/rounds', { date: today, course: state.course || null });
+    const round = await roundRes.json();
+
+    // 3) Add each entry.
+    for (const p of state.players) {
+      await postAdmin('/admin/rounds/' + round.id + '/entries', {
+        playerId: p.rosterId,
+        incomingTagId: numToId.get(p.tag),
+        acePool: !!p.ace,
+        ctp: !!p.ctp
+      });
+    }
+
+    // 3b) Set scores for players who have one. The entries POST doesn't take a
+    // score (defaults to null/DNF), so we PATCH each scored entry after.
+    // Re-fetch the round to get entry ids keyed by player.
+    const withEntries = await (await fetch(API_BASE + '/rounds/' + round.id, { credentials: 'include' })).json();
+    const entryByPlayer = new Map(withEntries.entries.map(e => [e.playerId, e.id]));
+    for (const p of state.players) {
+      if (p.score !== null && p.score !== undefined) {
+        const entryId = entryByPlayer.get(p.rosterId);
+        if (entryId != null) {
+          await patchAdmin('/admin/rounds/' + round.id + '/entries/' + entryId, { score: p.score });
+        }
+      }
+    }
+
+    // 4) Finalize — returns the round with server-assigned tags.
+    const finalRes = await postAdmin('/admin/rounds/' + round.id + '/finalize', {});
+    const finalized = await finalRes.json();
+
+    // Build the display rows from the server result, ordered by assigned tag.
+    const byPlayer = new Map(state.players.map(p => [p.rosterId, p]));
+    const rows = finalized.entries
+      .map(e => ({
+        name: (byPlayer.get(e.playerId) || {}).name || ('Player ' + e.playerId),
+        assignedNumber: idToNum.get(e.assignedTagId),
+        incomingNumber: idToNum.get(e.incomingTagId),
+        score: e.score,
+        dnf: e.score === null || e.score === undefined
+      }))
+      .sort((a, b) => a.assignedNumber - b.assignedNumber);
+
+    state.finalized = { roundId: round.id, course: state.course || '', rows };
+    save();
+    showFinalizeMsg('Round finalized and saved.', false);
+    render();
+  } catch (e) {
+    if (String(e.message).includes('Failed to fetch')) {
+      showFinalizeMsg('Sign-in required — redirecting…', true);
+      setTimeout(adminSignIn, 800);
+    } else {
+      showFinalizeMsg('Finalize failed: ' + e.message, true);
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// POST helper that throws on non-2xx (surfacing the API's error message).
+async function postAdmin(path, body) {
+  const res = await fetch(API_BASE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body)
+  });
+  if (res.status === 401 || res.status === 403) throw new Error('Failed to fetch'); // route to sign-in
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error(b.error || ('HTTP ' + res.status));
+  }
+  return res;
+}
+
+async function patchAdmin(path, body) {
+  const res = await fetch(API_BASE + path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body)
+  });
+  if (res.status === 401 || res.status === 403) throw new Error('Failed to fetch');
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error(b.error || ('HTTP ' + res.status));
+  }
+  return res;
+}
+
+function showFinalizeMsg(text, isError) {
+  const msg = document.getElementById('finalizeMsg');
+  msg.textContent = text;
+  msg.style.display = '';
+  msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
+}
+
+// ─── Export / import an unsanctioned round ────────────────
+// A non-admin runs a round locally, exports it as a text blob, and sends it to
+// an admin who imports it, reviews in the Play tab, and finalizes. The blob is
+// base64-encoded JSON of the round's players (incl. rosterId, needed for
+// finalize) + course. Versioned so we can evolve the format.
+const EXPORT_VERSION = 1;
+
+function exportRound() {
+  const msg = document.getElementById('exportMsg');
+  if (state.players.length === 0) {
+    msg.textContent = 'Add players before exporting.';
+    msg.style.display = ''; msg.style.color = 'var(--danger)';
+    return;
+  }
+  const payload = {
+    v: EXPORT_VERSION,
+    course: state.course || '',
+    exportedAt: new Date().toISOString(),
+    players: state.players.map(p => ({
+      rosterId: p.rosterId, name: p.name, tag: p.tag,
+      score: p.score, ace: !!p.ace, ctp: !!p.ctp
+    }))
+  };
+  // Base64 of UTF-8 JSON (btoa needs the escape/encodeURIComponent dance for
+  // non-ASCII names).
+  const blob = 'TAGS1:' + btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  const out = document.getElementById('exportOut');
+  out.value = blob;
+  out.style.display = '';
+  document.getElementById('copyExportBtn').style.display = '';
+  msg.textContent = 'Send this text to an admin to finalize.';
+  msg.style.display = ''; msg.style.color = 'var(--green)';
+}
+
+async function copyExport() {
+  const out = document.getElementById('exportOut');
+  try {
+    await navigator.clipboard.writeText(out.value);
+    showExportCopied('Copied to clipboard.');
+  } catch (e) {
+    out.select(); // fallback: select so the user can copy manually
+    showExportCopied('Selected — press Copy on your device.');
+  }
+}
+function showExportCopied(text) {
+  const msg = document.getElementById('exportMsg');
+  msg.textContent = text; msg.style.display = ''; msg.style.color = 'var(--green)';
+}
+
+function importRound() {
+  const msg = document.getElementById('importMsg');
+  const show = (t, err) => { msg.textContent = t; msg.style.display=''; msg.style.color = err?'var(--danger)':'var(--green)'; };
+  const raw = document.getElementById('importIn').value.trim();
+  if (!raw) { show('Paste an exported round first.', true); return; }
+
+  let payload;
+  try {
+    const b64 = raw.startsWith('TAGS1:') ? raw.slice(6) : raw;
+    payload = JSON.parse(decodeURIComponent(escape(atob(b64))));
+  } catch (e) { show('Could not read that text — is it a valid export?', true); return; }
+  if (!payload || !Array.isArray(payload.players) || payload.players.length === 0) {
+    show('Export has no players.', true); return;
+  }
+
+  // Validate the roster players still exist in this DB (needed for finalize).
+  const known = new Set(roster.map(r => r.id));
+  const missing = payload.players.filter(p => !known.has(p.rosterId)).map(p => p.name);
+  if (roster.length === 0) {
+    show('Roster not loaded yet — try again in a moment.', true); return;
+  }
+  if (missing.length) {
+    show('These players aren’t on the roster: ' + missing.join(', ') + '. Add them first.', true);
+    return;
+  }
+
+  if (state.players.length > 0 &&
+      !confirm('Loading this round will replace the round currently in progress. Continue?')) return;
+
+  // Load into local round state; admin reviews/finalizes in the Play tab.
+  state = {
+    players: payload.players.map((p, i) => ({
+      id: i + 1, rosterId: p.rosterId, name: p.name, tag: p.tag,
+      ace: !!p.ace, ctp: !!p.ctp, score: (p.score == null ? null : p.score)
+    })),
+    course: payload.course || '',
+    finalized: null
+  };
+  save();
+  show('Round loaded. Review it in the Play tab, then finalize.', false);
+  location.hash = '#/round';
+  goStep('results');
+}
+
+// League Home: current tag standings (public, from /api/standings).
+async function loadStandings() {
+  const el = document.getElementById('standingsList');
+  try {
+    const res = await fetch(API_BASE + '/standings');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    if (rows.length === 0) {
+      el.innerHTML = '<div class="empty">No tags assigned yet. Finalize a round to populate standings.</div>';
+    } else {
+      el.innerHTML = rows.map(r => `
+        <div class="row">
+          <div class="num">${r.tagNumber}</div>
+          <div class="name">${esc(r.playerName)}</div>
+        </div>`).join('');
+    }
+  } catch (e) {
+    el.innerHTML = '<div class="empty">Could not load standings (' + esc(e.message) + ').</div>';
+  }
+}
+
+// League Home: history of finalized rounds. Tap one to expand its assignments.
+let historyOpenId = null;
+
+async function loadHistory() {
+  const el = document.getElementById('historyList');
+  try {
+    const res = await fetch(API_BASE + '/rounds');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const all = await res.json();
+    const finalized = all.filter(r => r.status === 'finalized');
+    if (finalized.length === 0) {
+      el.innerHTML = '<div class="empty">No finalized rounds yet.</div>';
+      return;
+    }
+    el.innerHTML = finalized.map(r => {
+      const label = `${fmtDate(r.date)}${r.course ? ' · ' + esc(r.course) : ''} · ${r.playerCount} player${r.playerCount===1?'':'s'}`;
+      const detail = historyOpenId === r.id ? `<div id="history-detail-${r.id}" class="hist-detail"><div class="hint">Loading…</div></div>` : '';
+      return `
+        <div class="row selectable" onclick="toggleHistory(${r.id})" style="justify-content:space-between">
+          <div class="name">${label}</div>
+          <div class="meta">${historyOpenId === r.id ? '▲' : '▼'}</div>
+        </div>${detail}`;
+    }).join('');
+    if (historyOpenId != null) loadHistoryDetail(historyOpenId);
+  } catch (e) {
+    el.innerHTML = '<div class="empty">Could not load history (' + esc(e.message) + ').</div>';
+  }
+}
+
+function toggleHistory(id) {
+  historyOpenId = (historyOpenId === id) ? null : id;
+  loadHistory();
+}
+
+async function loadHistoryDetail(id) {
+  const box = document.getElementById('history-detail-' + id);
+  if (!box) return;
+  try {
+    const res = await fetch(API_BASE + '/rounds/' + id);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const round = await res.json();
+    // Show assignments ordered by assigned tag number.
+    const rows = round.entries.slice().sort((a,b) =>
+      (a.assignedNumber ?? 1e9) - (b.assignedNumber ?? 1e9));
+    box.innerHTML = rows.map(e => `
+      <div class="row result-row">
+        <div class="tag-out">#${e.assignedNumber ?? '—'}</div>
+        <div style="flex:1">
+          <div class="name">${esc(e.playerName)} ${e.score==null?'<span class="tie-flag">DNF</span>':''}</div>
+          <div class="meta">${e.score==null?'No score':'Score '+e.score} · brought #${e.incomingNumber ?? '—'}</div>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = '<div class="hint">Could not load round (' + esc(e.message) + ').</div>';
+  }
+}
+
+// Format a YYYY-MM-DD date string for display (avoids TZ shifts from Date()).
+function fmtDate(d) {
+  if (!d) return '';
+  const [y,m,day] = String(d).slice(0,10).split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[+m-1]} ${+day}, ${y}`;
+}
+
+let rosterEditId = null; // id of the roster player whose edit panel is open
+
+async function loadRoster() {
+  const el = document.getElementById('rosterList');
+  try {
+    const res = await fetch(API_BASE + '/players');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const list = await res.json();
+    roster = list; // keep the shared cache fresh for the Setup typeahead too
+    document.getElementById('rosterCount').textContent = list.length;
+    renderRoster(list);
+  } catch (e) {
+    el.innerHTML = '<div class="empty">Could not load roster (' + esc(e.message) + ').</div>';
+  }
+}
+
+function renderRoster(list) {
+  const el = document.getElementById('rosterList');
+  if (list.length === 0) {
+    el.innerHTML = '<div class="empty">No players in the roster yet.</div>';
+    return;
+  }
+  // Edit controls only appear when signed in as admin (adminEmail set).
+  const canEdit = !!adminEmail;
+  el.innerHTML = list.map(p => {
+    const tag = p.tagNumber != null ? p.tagNumber : '—';
+    if (rosterEditId === p.id) {
+      return `
+      <div class="row-edit">
+        <div class="row" style="border:none;padding-bottom:4px">
+          <div class="num">${tag}</div>
+          <div class="name">${esc(p.name)}</div>
+        </div>
+        <label>Name</label>
+        <input type="text" id="edit-name-${p.id}" value="${esc(p.name)}">
+        <label>Tag number (1–300)</label>
+        <input type="number" id="edit-tag-${p.id}" min="1" max="300" value="${p.tagNumber != null ? p.tagNumber : ''}" placeholder="none">
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn" style="margin:0" onclick="saveRosterEdit(${p.id})">Save</button>
+          <button class="btn secondary" style="margin:0" onclick="cancelRosterEdit()">Cancel</button>
+        </div>
+        <button class="btn danger" onclick="deleteRosterPlayer(${p.id}, ${JSON.stringify(p.name).replace(/"/g,'&quot;')})">Delete player</button>
+        <div id="edit-msg-${p.id}" class="hint" style="display:none"></div>
+      </div>`;
+    }
+    return `
+      <div class="row">
+        <div class="num">${tag}</div>
+        <div class="name">${esc(p.name)}</div>
+        ${canEdit ? `<button class="linkbtn" onclick="openRosterEdit(${p.id})">Edit</button>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function openRosterEdit(id) { rosterEditId = id; renderRoster(roster); }
+function cancelRosterEdit() { rosterEditId = null; renderRoster(roster); }
+
+async function saveRosterEdit(id) {
+  const player = roster.find(p => p.id === id);
+  if (!player) return;
+  const newName = document.getElementById('edit-name-' + id).value.trim();
+  const tagVal = document.getElementById('edit-tag-' + id).value;
+  const newTag = tagVal === '' ? null : parseInt(tagVal, 10);
+  if (!newName) { showRosterEditMsg(id, 'Name is required.', true); return; }
+  if (newTag !== null && !(newTag >= 1 && newTag <= 300)) {
+    showRosterEditMsg(id, 'Tag must be 1–300 (or blank).', true); return;
+  }
+
+  try {
+    // Rename if changed.
+    if (newName !== player.name) {
+      await patchAdmin('/admin/players/' + id, { name: newName });
+    }
+    // Change tag if changed (only when a tag number is provided).
+    if (newTag !== null && newTag !== player.tagNumber) {
+      await patchAdmin('/admin/players/' + id + '/tag', { tagNumber: newTag });
+    }
+    rosterEditId = null;
+    await loadRoster();
+  } catch (e) {
+    if (String(e.message).includes('Failed to fetch')) {
+      showRosterEditMsg(id, 'Sign-in required — redirecting…', true);
+      setTimeout(adminSignIn, 800);
+    } else {
+      showRosterEditMsg(id, e.message, true);
+    }
+  }
+}
+
+async function deleteRosterPlayer(id, name) {
+  if (!confirm('Delete ' + name + ' from the roster?')) return;
+  try {
+    const res = await fetch(API_BASE + '/admin/players/' + id, {
+      method: 'DELETE', credentials: 'include'
+    });
+    if (res.status === 401 || res.status === 403) { setTimeout(adminSignIn, 300); return; }
+    if (res.status === 204) { rosterEditId = null; await loadRoster(); return; }
+    const body = await res.json().catch(() => ({}));
+    showRosterEditMsg(id, body.error || ('HTTP ' + res.status), true);
+  } catch (e) {
+    showRosterEditMsg(id, 'Sign-in required — redirecting…', true);
+    setTimeout(adminSignIn, 800);
+  }
+}
+
+function showRosterEditMsg(id, text, isError) {
+  const msg = document.getElementById('edit-msg-' + id);
+  if (!msg) return;
+  msg.textContent = text;
+  msg.style.display = '';
+  msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
+}
+
+async function adminAddPlayer() {
+  const input = document.getElementById('aName');
+  const tagInput = document.getElementById('aTag');
+  const btn = document.getElementById('aAddBtn');
+  const name = input.value.trim();
+  const tagNumber = parseInt(tagInput.value, 10);
+  if (!name) { showAdminMsg('Enter a name.', true); return; }
+  if (!(tagNumber >= 1 && tagNumber <= 300)) { showAdminMsg('Enter a tag number from 1 to 300.', true); return; }
+
+  btn.disabled = true;
+  try {
+    const res = await fetch(API_BASE + '/admin/players', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name, tagNumber })
+    });
+    if (res.status === 401 || res.status === 403) {
+      // Session expired or not an admin — send them to sign in again.
+      showAdminMsg('Session expired — redirecting to sign in…', true);
+      setTimeout(adminSignIn, 800);
+      return;
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || ('HTTP ' + res.status));
+    }
+    input.value = '';
+    tagInput.value = '';
+    input.focus();
+    showAdminMsg('Added “' + name + '” (tag #' + tagNumber + ') to the roster.', false);
+    loadRoster();
+  } catch (e) {
+    // A rejected fetch here is almost always the Access cross-origin 302 that
+    // fetch can't follow → the session lapsed. Route to sign-in.
+    showAdminMsg('Sign-in required — redirecting…', true);
+    setTimeout(adminSignIn, 800);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function showAdminMsg(text, isError) {
+  const msg = document.getElementById('aMsg');
+  msg.textContent = text;
+  msg.style.display = '';
+  msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Enter key on tag field adds player
+document.getElementById('pTag').addEventListener('keydown', e => { if (e.key === 'Enter') addPlayer(); });
+// Enter key on admin name/tag fields adds roster player
+document.getElementById('aName').addEventListener('keydown', e => { if (e.key === 'Enter') adminAddPlayer(); });
+document.getElementById('aTag').addEventListener('keydown', e => { if (e.key === 'Enter') adminAddPlayer(); });
+
+// Hash-based routing: react to nav clicks (which set location.hash) and to the
+// post-login redirect (#/admin). Default to League Home.
+window.addEventListener('hashchange', router);
+router();
+</script>
+</body>
+</html>
