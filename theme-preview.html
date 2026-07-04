@@ -200,12 +200,16 @@ function apply(t) {
 }
 
 function envFor(t) {
+  // Single-quote the font value: it contains commas/spaces (and often inner
+  // double quotes like "Helvetica Neue"), which an unquoted .env value would
+  // break on. Single-outer + double-inner is what docker-compose's parser
+  // wants. Fonts here never contain a single quote, so this is safe.
   return [
     `THEME_PRIMARY=${t.primary}`,
     `THEME_ACCENT=${t.accent}`,
     `THEME_SECONDARY=${t.secondary}`,
     `THEME_BG=${t.bg}`,
-    `THEME_FONT=${t.font}`,
+    `THEME_FONT='${t.font}'`,
   ].join('\n');
 }
 
