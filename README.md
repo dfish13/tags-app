@@ -99,6 +99,10 @@ To stand up a new league (e.g. "Mile Hi Tags"):
    - `LEAGUE_NAME` — shown in the header and page title (e.g. `Mile Hi Tags`).
    - `POSTGRES_PASSWORD` — a strong, unique password.
    - `ADMIN_EMAILS` — comma-separated admin emails (they get write access).
+   - *(Optional)* `THEME_PRIMARY` / `THEME_ACCENT` / `THEME_SECONDARY` /
+     `THEME_BG` / `THEME_FONT` — brand the app with your own colors and font.
+     Leave blank to use the default look. Colors are CSS hex; the font is any
+     CSS `font-family` (the pressed-button shade is derived from the primary).
 3. **Start it:**
    ```bash
    docker compose up -d --build

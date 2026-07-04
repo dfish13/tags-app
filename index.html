@@ -23,11 +23,12 @@
     --danger: #c0392b;         /* kept: destructive actions need red */
     --accent: #f4e04d;         /* banana-cream (ACE, tag output, tab underline) */
     --blue: #5eb1bf;           /* pacific-blue (CTP) */
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: var(--font);
     background: var(--bg);
     color: var(--text);
     font-size: 17px;
@@ -1318,7 +1319,38 @@ async function loadConfig() {
       document.getElementById('leagueTitle').textContent = '🥏 ' + cfg.leagueName;
       document.title = cfg.leagueName;
     }
-  } catch (e) { /* offline / no API — keep the default title */ }
+    if (cfg.theme) applyTheme(cfg.theme);
+  } catch (e) { /* offline / no API — keep the default title + theme */ }
+}
+
+// Apply a per-deployment theme by overriding CSS variables. Any null/missing
+// value leaves that slot at the stylesheet default. Setting `primary` also
+// updates the variables that are shades of it (pressed state, body text).
+function applyTheme(t) {
+  const root = document.documentElement.style;
+  const set = (v, val) => { if (val) root.setProperty(v, val); };
+  if (t.primary) {
+    set('--green', t.primary);
+    set('--text', t.primary);
+    set('--green-dark', darken(t.primary, 0.35));
+  }
+  set('--accent', t.accent);
+  set('--blue', t.secondary);
+  set('--bg', t.bg);
+  set('--font', t.font);
+}
+
+// Darken a #rrggbb hex color toward black by `amount` (0–1). Used to derive the
+// pressed-button shade from the primary color. Non-hex input is returned as-is.
+function darken(hex, amount) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const f = 1 - amount;
+  const r = Math.round(((n >> 16) & 255) * f);
+  const g = Math.round(((n >> 8) & 255) * f);
+  const b = Math.round((n & 255) * f);
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
 // Hash-based routing: react to nav clicks (which set location.hash) and to the

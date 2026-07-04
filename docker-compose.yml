@@ -31,6 +31,12 @@ services:
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # League name shown in the UI (header/title). One codebase, any league.
       LEAGUE_NAME: ${LEAGUE_NAME:-Tags League}
+      # Optional per-deployment theme (see .env.example). Unset → app defaults.
+      THEME_PRIMARY: ${THEME_PRIMARY:-}
+      THEME_ACCENT: ${THEME_ACCENT:-}
+      THEME_SECONDARY: ${THEME_SECONDARY:-}
+      THEME_BG: ${THEME_BG:-}
+      THEME_FONT: ${THEME_FONT:-}
     # Bind to localhost only — the API must be reachable ONLY via the
     # cloudflared tunnel, never directly from the LAN, or the
     # Cf-Access-Authenticated-User-Email header could be spoofed to bypass

@@ -18,11 +18,22 @@ api.get("/health", (_req, res) => {
 });
 
 // Public site config. Lets one codebase serve any league — the frontend reads
-// the league name from here instead of hardcoding it. Set LEAGUE_NAME per
-// deployment (see .env.example).
+// the league name and theme from here instead of hardcoding them. Set these
+// per deployment (see .env.example). Any unset theme value is returned as null
+// and the frontend keeps its built-in default for that slot.
 const LEAGUE_NAME = process.env.LEAGUE_NAME?.trim() || "Tags League";
+const env = (k: string) => process.env[k]?.trim() || null;
 api.get("/config", (_req, res) => {
-  res.json({ leagueName: LEAGUE_NAME });
+  res.json({
+    leagueName: LEAGUE_NAME,
+    theme: {
+      primary: env("THEME_PRIMARY"),     // header, buttons
+      accent: env("THEME_ACCENT"),       // tag badges, tab underline
+      secondary: env("THEME_SECONDARY"), // CTP accent
+      bg: env("THEME_BG"),               // page background
+      font: env("THEME_FONT"),           // body font-family
+    },
+  });
 });
 
 // Public read routes — no auth. Anyone can view players, tags, rounds, stats.
