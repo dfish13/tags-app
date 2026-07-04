@@ -29,6 +29,8 @@ services:
       PORT: 3001
       # Comma-separated admin allowlist seeded on boot (see .env / .env.example).
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # League name shown in the UI (header/title). One codebase, any league.
+      LEAGUE_NAME: ${LEAGUE_NAME:-Tags League}
     # Bind to localhost only — the API must be reachable ONLY via the
     # cloudflared tunnel, never directly from the LAN, or the
     # Cf-Access-Authenticated-User-Email header could be spoofed to bypass

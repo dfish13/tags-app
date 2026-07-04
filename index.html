@@ -213,7 +213,7 @@
 </head>
 <body>
 <header>
-  <h1>🥏 Tags League</h1>
+  <h1 id="leagueTitle">🥏 Tags League</h1>
   <div class="sub" id="phaseSub">League home</div>
 </header>
 <!-- Top-level navigation between the two main views + admin -->
@@ -1307,9 +1307,24 @@ document.getElementById('pTag').addEventListener('keydown', e => { if (e.key ===
 document.getElementById('aName').addEventListener('keydown', e => { if (e.key === 'Enter') adminAddPlayer(); });
 document.getElementById('aTag').addEventListener('keydown', e => { if (e.key === 'Enter') adminAddPlayer(); });
 
+// Load per-deployment site config (league name) so one codebase serves any
+// league. Falls back to the built-in default if the API is unreachable.
+async function loadConfig() {
+  try {
+    const res = await fetch(API_BASE + '/config');
+    if (!res.ok) return;
+    const cfg = await res.json();
+    if (cfg.leagueName) {
+      document.getElementById('leagueTitle').textContent = '🥏 ' + cfg.leagueName;
+      document.title = cfg.leagueName;
+    }
+  } catch (e) { /* offline / no API — keep the default title */ }
+}
+
 // Hash-based routing: react to nav clicks (which set location.hash) and to the
 // post-login redirect (#/admin). Default to League Home.
 window.addEventListener('hashchange', router);
+loadConfig();
 router();
 </script>
 </body>

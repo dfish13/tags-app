@@ -78,9 +78,47 @@ npm run db:seed        # seed tags + admin
 
 Set `DATABASE_URL` in the environment (see `.env.example`).
 
+## Running your own league
+
+This app is **single-tenant by design**: one deployment = one league. A league's
+tags are physical objects it owns, and its admins, standings, and history are
+entirely its own — there's no cross-league data to share. So instead of a
+`league` dimension in the data model, each league runs its own copy of the site
+and database. The codebase is identical across leagues; only configuration
+differs.
+
+To stand up a new league (e.g. "Mile Hi Tags"):
+
+1. **Clone the repo** and copy the env template:
+   ```bash
+   git clone https://github.com/dfish13/tags-app.git
+   cd tags-app
+   cp .env.example .env
+   ```
+2. **Edit `.env`** for your league:
+   - `LEAGUE_NAME` — shown in the header and page title (e.g. `Mile Hi Tags`).
+   - `POSTGRES_PASSWORD` — a strong, unique password.
+   - `ADMIN_EMAILS` — comma-separated admin emails (they get write access).
+3. **Start it:**
+   ```bash
+   docker compose up -d --build
+   ```
+   On boot the API migrates, seeds the tag pool (1–300) and admins, and serves
+   on port 3001. Serve `index.html` alongside it (same origin as the API).
+4. **Put it behind your own domain + auth.** The admin model relies on the API
+   being reachable *only* through a trusted proxy that injects the
+   `Cf-Access-Authenticated-User-Email` header. The reference setup uses a
+   Cloudflare Tunnel + Cloudflare Access (see Deployment below); replicate that
+   with your own hostname, tunnel, and Access application scoped to
+   `your-host/api/admin/*` with your admin email allowlist. **Do not expose the
+   API port directly** — bind it to `127.0.0.1` (as the compose file does) so
+   the auth header can't be spoofed.
+
+That's it — same code, your config, your data, your host.
+
 ## Deployment
 
-The production instance runs on a Raspberry Pi behind a Cloudflare Tunnel:
+The reference instance runs on a Raspberry Pi behind a Cloudflare Tunnel:
 
 - `tags.duncanfish.co/api/*` → the API container (localhost:3001)
 - `tags.duncanfish.co/*` → the static `index.html`

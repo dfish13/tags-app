@@ -17,6 +17,14 @@ api.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+// Public site config. Lets one codebase serve any league — the frontend reads
+// the league name from here instead of hardcoding it. Set LEAGUE_NAME per
+// deployment (see .env.example).
+const LEAGUE_NAME = process.env.LEAGUE_NAME?.trim() || "Tags League";
+api.get("/config", (_req, res) => {
+  res.json({ leagueName: LEAGUE_NAME });
+});
+
 // Public read routes — no auth. Anyone can view players, tags, rounds, stats.
 api.use("/players", playersRouter);
 api.use("/tags", tagsRouter);
