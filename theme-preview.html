@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tags — Theme Preview</title>
+<!--
+  DISPOSABLE theme-picker. Cycle presets with ◀ ▶ or arrow keys, find one you
+  like, and copy its THEME_* values into your .env. Delete this file when done.
+  Renders a mockup using the SAME CSS-variable model as the real app, so what
+  you see here matches what applyTheme() produces in index.html.
+-->
+<style>
+  :root {
+    --green: #042a2b; --green-dark: #021819; --bg: #eef3f3; --card: #fcfcfc;
+    --line: #d7e2e2; --text: #042a2b; --muted: #5b7374; --danger: #c0392b;
+    --accent: #f4e04d; --blue: #5eb1bf;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: #222; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+
+  /* Picker controls (fixed, not themed — stays constant while app re-themes) */
+  .controls {
+    position: sticky; top: 0; z-index: 100;
+    background: #1a1a1a; border-bottom: 1px solid #333;
+    padding: 12px 16px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .controls button {
+    background: #333; color: #fff; border: 1px solid #555; border-radius: 8px;
+    padding: 8px 14px; font-size: 15px; font-weight: 700; cursor: pointer;
+  }
+  .controls button:hover { background: #444; }
+  .themeName { font-size: 16px; font-weight: 700; min-width: 220px; }
+  .themeIdx { color: #999; font-size: 13px; }
+  .swatches { display: flex; gap: 6px; }
+  .sw { width: 22px; height: 22px; border-radius: 5px; border: 1px solid #000; }
+  .envblock {
+    margin-left: auto; display: flex; align-items: center; gap: 10px;
+  }
+  .envblock code {
+    background: #000; color: #6f6; padding: 6px 10px; border-radius: 6px;
+    font-size: 12px; white-space: pre; font-family: ui-monospace, Menlo, monospace;
+  }
+  .copyBtn { background: #2a5 !important; border-color: #2a5 !important; }
+  .copied { color: #6f6; font-size: 13px; }
+
+  /* ── App mockup — mirrors index.html's components & CSS-var usage ── */
+  .app { max-width: 640px; margin: 20px auto; }
+  .frame {
+    background: var(--bg); font-family: var(--font); color: var(--text);
+    border-radius: 14px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  }
+  .m-header { background: var(--green); color: #fff; padding: 14px 16px; }
+  .m-header h1 { margin: 0; font-size: 19px; font-weight: 700; }
+  .m-header .sub { font-size: 13px; opacity: .85; margin-top: 2px; }
+  .m-tabs { display: flex; background: var(--green-dark); }
+  .m-tabs div { flex: 1; text-align: center; color: rgba(255,255,255,.6);
+    padding: 11px 4px; font-size: 13px; font-weight: 600; border-bottom: 3px solid transparent; }
+  .m-tabs div.active { color: #fff; border-bottom-color: var(--accent); }
+  .m-main { padding: 16px; }
+  .m-card { background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  .m-card h2 { margin: 0 0 10px; font-size: 16px; }
+  .m-hint { font-size: 13px; color: var(--muted); margin: 4px 0 10px; }
+  .m-row { display: flex; align-items: center; gap: 10px; padding: 11px 4px;
+    border-bottom: 1px solid var(--line); }
+  .m-row:last-child { border-bottom: none; }
+  .m-num { min-width: 42px; height: 42px; display: flex; align-items: center;
+    justify-content: center; background: var(--green); color: #fff;
+    border-radius: 9px; font-weight: 700; font-size: 16px; }
+  .m-name { flex: 1; font-weight: 600; }
+  .m-meta { font-size: 12px; color: var(--muted); }
+  .m-tagout { min-width: 50px; height: 44px; display: flex; align-items: center;
+    justify-content: center; background: var(--accent); color: #4a3500;
+    border-radius: 9px; font-weight: 800; font-size: 18px; }
+  .m-badge-ctp { background: var(--blue); color: #042a2b; border-radius: 5px;
+    padding: 1px 6px; font-size: 11px; font-weight: 800; }
+  .m-btn { width: 100%; padding: 14px; font-size: 17px; font-weight: 700;
+    border: none; border-radius: 10px; background: var(--green); color: #fff;
+    cursor: pointer; margin-top: 6px; }
+  .m-btn.sec { background: color-mix(in srgb, var(--green) 12%, #fff); color: var(--green); border: none; }
+  .m-btn.danger { background: color-mix(in srgb, var(--danger) 12%, #fff); color: var(--danger); border: none; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <button onclick="cycle(-1)">◀ Prev</button>
+  <button onclick="cycle(1)">Next ▶</button>
+  <div>
+    <div class="themeName" id="themeName">—</div>
+    <div class="themeIdx" id="themeIdx"></div>
+  </div>
+  <div class="swatches" id="swatches"></div>
+  <div class="envblock">
+    <code id="envText"></code>
+    <button class="copyBtn" onclick="copyEnv()">Copy .env</button>
+    <span class="copied" id="copiedMsg"></span>
+  </div>
+</div>
+
+<div class="app">
+  <div class="frame">
+    <div class="m-header">
+      <h1>🥏 <span id="mLeague">Tags League</span></h1>
+      <div class="sub">League home</div>
+    </div>
+    <div class="m-tabs">
+      <div class="active">Home</div><div>Play</div><div>Admin</div>
+    </div>
+    <div class="m-main">
+      <div class="m-card">
+        <h2>Current tag standings</h2>
+        <div class="m-hint">Who holds each tag right now.</div>
+        <div class="m-row"><div class="m-num">1</div><div class="m-name">Alice</div></div>
+        <div class="m-row"><div class="m-num">7</div><div class="m-name">Bob</div></div>
+        <div class="m-row"><div class="m-num">23</div><div class="m-name">Cara</div></div>
+      </div>
+      <div class="m-card">
+        <h2>Tag assignment — final</h2>
+        <div class="m-row">
+          <div class="m-tagout">#5</div>
+          <div style="flex:1"><div class="m-name">Dana <span class="m-badge-ctp">CTP</span></div>
+          <div class="m-meta">Score 49 · brought #12</div></div>
+        </div>
+        <div class="m-row">
+          <div class="m-tagout">#12</div>
+          <div style="flex:1"><div class="m-name">Evan</div>
+          <div class="m-meta">Score 54 · brought #5</div></div>
+        </div>
+        <button class="m-btn">Finalize &amp; save round</button>
+        <button class="m-btn sec">Export round for approval</button>
+        <button class="m-btn danger">Reset round</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Curated themes: each a cohesive palette + a font that suits its mood.
+// primary=header/buttons/text, accent=tag badges/tab underline,
+// secondary=CTP, bg=page background.
+const THEMES = [
+  { name: 'Evergreen (default)', primary:'#042a2b', accent:'#f4e04d', secondary:'#5eb1bf', bg:'#eef3f3',
+    font:'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
+  { name: 'Fairway', primary:'#1b4332', accent:'#f4a259', secondary:'#8ab17d', bg:'#f0f4ee',
+    font:'"Trebuchet MS", "Segoe UI", sans-serif' },
+  { name: 'Midnight Navy', primary:'#0d1b2a', accent:'#e0aaff', secondary:'#4cc9f0', bg:'#eef1f6',
+    font:'Georgia, "Times New Roman", serif' },
+  { name: 'Maroon Slab', primary:'#5a1a2b', accent:'#f2c14e', secondary:'#c97b84', bg:'#f6f0ee',
+    font:'"Rockwell", "Courier New", monospace' },
+  { name: 'Sunset', primary:'#6a040f', accent:'#ffba08', secondary:'#e85d04', bg:'#fff4ec',
+    font:'"Palatino Linotype", Palatino, serif' },
+  { name: 'Forest Mono', primary:'#2d3a2e', accent:'#a3b18a', secondary:'#588157', bg:'#eef2ec',
+    font:'ui-monospace, "SF Mono", Menlo, monospace' },
+  { name: 'Slate & Amber', primary:'#2f3e46', accent:'#ffb703', secondary:'#84a98c', bg:'#eef1f2',
+    font:'"Helvetica Neue", Helvetica, Arial, sans-serif' },
+  { name: 'Blueprint', primary:'#14213d', accent:'#fca311', secondary:'#5c7cba', bg:'#e9ecf3',
+    font:'"Courier New", ui-monospace, monospace' },
+  { name: 'Berry', primary:'#3c1642', accent:'#f9c80e', secondary:'#b56576', bg:'#f5eef6',
+    font:'Georgia, serif' },
+  { name: 'Coastal', primary:'#005f73', accent:'#ee9b00', secondary:'#94d2bd', bg:'#eaf4f4',
+    font:'"Segoe UI", "Helvetica Neue", sans-serif' },
+  { name: 'Charcoal Lime', primary:'#22333b', accent:'#c5f04e', secondary:'#7c9885', bg:'#eef1f0',
+    font:'"Arial Rounded MT Bold", "Segoe UI", sans-serif' },
+  { name: 'Autumn Trail', primary:'#582f0e', accent:'#ffd60a', secondary:'#a68a64', bg:'#f6f1e9',
+    font:'"Book Antiqua", Palatino, serif' },
+];
+
+let i = 0;
+
+function darken(hex, amount) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16), f = 1 - amount;
+  const r = Math.round(((n >> 16) & 255) * f);
+  const g = Math.round(((n >> 8) & 255) * f);
+  const b = Math.round((n & 255) * f);
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+function apply(t) {
+  const r = document.documentElement.style;
+  r.setProperty('--green', t.primary);
+  r.setProperty('--text', t.primary);
+  r.setProperty('--green-dark', darken(t.primary, 0.35));
+  r.setProperty('--accent', t.accent);
+  r.setProperty('--blue', t.secondary);
+  r.setProperty('--bg', t.bg);
+  r.setProperty('--font', t.font);
+
+  document.getElementById('themeName').textContent = t.name;
+  document.getElementById('themeIdx').textContent = `${i + 1} / ${THEMES.length}`;
+  document.getElementById('swatches').innerHTML =
+    [t.primary, t.accent, t.secondary, t.bg].map(c => `<div class="sw" style="background:${c}"></div>`).join('');
+  document.getElementById('envText').textContent = envFor(t);
+  document.getElementById('copiedMsg').textContent = '';
+}
+
+function envFor(t) {
+  return [
+    `THEME_PRIMARY=${t.primary}`,
+    `THEME_ACCENT=${t.accent}`,
+    `THEME_SECONDARY=${t.secondary}`,
+    `THEME_BG=${t.bg}`,
+    `THEME_FONT=${t.font}`,
+  ].join('\n');
+}
+
+function cycle(d) {
+  i = (i + d + THEMES.length) % THEMES.length;
+  apply(THEMES[i]);
+}
+
+async function copyEnv() {
+  try {
+    await navigator.clipboard.writeText(envFor(THEMES[i]));
+    document.getElementById('copiedMsg').textContent = '✓ copied';
+  } catch (e) {
+    document.getElementById('copiedMsg').textContent = 'copy failed — select manually';
+  }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') cycle(1);
+  if (e.key === 'ArrowLeft') cycle(-1);
+});
+
+apply(THEMES[0]);
+</script>
+</body>
+</html>

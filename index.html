@@ -146,8 +146,18 @@
     margin-top: 14px;
   }
   button.btn:active { background: var(--green-dark); }
-  button.btn.secondary { background: #fff; color: var(--green); border: 1.5px solid var(--green); }
-  button.btn.danger { background: #fff; color: var(--danger); border: 1.5px solid var(--danger); }
+  /* Soft-filled secondary/danger: a light tint of the color, no border. The
+     tint is derived from the palette so it adapts to any theme. */
+  button.btn.secondary {
+    background: color-mix(in srgb, var(--green) 12%, #fff);
+    color: var(--green); border: none;
+  }
+  button.btn.secondary:active { background: color-mix(in srgb, var(--green) 22%, #fff); }
+  button.btn.danger {
+    background: color-mix(in srgb, var(--danger) 12%, #fff);
+    color: var(--danger); border: none;
+  }
+  button.btn.danger:active { background: color-mix(in srgb, var(--danger) 22%, #fff); }
 
   .row {
     display: flex;
