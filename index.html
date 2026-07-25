@@ -312,6 +312,8 @@
   <section id="view-setup">
     <div class="card">
       <h2>Round details</h2>
+      <label for="rDate">Play date</label>
+      <input type="date" id="rDate" onchange="setPlayDate(this.value)">
       <label for="rCourse">Course (optional)</label>
       <input type="text" id="rCourse" autocomplete="off" placeholder="e.g. Maple Hill"
         onchange="setCourse(this.value)">
@@ -374,6 +376,7 @@
     <div class="card">
       <h2 id="resultsTitle">Tag assignment — preview</h2>
       <p class="hint" id="resultsHint">Lowest score gets the lowest incoming tag. Ties: better incoming tag wins. This is a preview until you finalize.</p>
+      <p class="hint" id="resultsDate"></p>
       <div id="resultsList"></div>
       <button class="btn" id="finalizeBtn" onclick="finalizeRound()">Finalize &amp; save round</button>
       <div id="finalizeMsg" class="hint" style="display:none"></div>
@@ -480,15 +483,25 @@ function load() {
     const s = JSON.parse(localStorage.getItem(KEY));
     if (s && Array.isArray(s.players)) {
       if (typeof s.course !== 'string') s.course = '';
+      if (typeof s.playDate !== 'string') s.playDate = '';
       if (!('finalized' in s)) s.finalized = null; // server result once finalized
       return s;
     }
   } catch (e) {}
-  return { players: [], course: '', finalized: null };
+  return { players: [], course: '', playDate: '', finalized: null };
 }
 function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
 
 function setCourse(v) { state.course = String(v || '').trim(); save(); }
+function setPlayDate(v) { state.playDate = String(v || '').trim(); save(); }
+
+// Today's date in the DEVICE's timezone (YYYY-MM-DD). Deliberately not
+// toISOString(): that is UTC, which rolls evening US rounds onto tomorrow.
+function localToday() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+    '-' + String(d.getDate()).padStart(2, '0');
+}
 
 function nextId() {
   const max = state.players.reduce((m, p) => Math.max(m, p.id || 0), 0);
@@ -554,7 +567,15 @@ function goStep(s) {
   for (const x of ['setup','scores','results']) {
     document.getElementById('tab-'+x).classList.toggle('active', x===s);
   }
-  if (s === 'setup') { loadRosterForSetup(); document.getElementById('rCourse').value = state.course || ''; }
+  if (s === 'setup') {
+    loadRosterForSetup();
+    document.getElementById('rCourse').value = state.course || '';
+    document.getElementById('rDate').value = state.playDate || localToday();
+  }
+  if (s === 'results') {
+    document.getElementById('resultsDate').textContent =
+      'Play date: ' + fmtDate(state.playDate || localToday()) + ' — change it in Setup.';
+  }
   render();
 }
 
@@ -715,7 +736,7 @@ function setScore(id, val) {
 
 function resetRound() {
   if (!confirm('Clear all players and start a new round?')) return;
-  state = { players: [], course: '', finalized: null };
+  state = { players: [], course: '', playDate: '', finalized: null };
   save();
   document.getElementById('rCourse').value = '';
   goStep('setup');
@@ -954,9 +975,11 @@ async function finalizeRound() {
       if (!numToId.has(p.tag)) throw new Error('Tag #' + p.tag + ' does not exist on the server.');
     }
 
-    // 2) Create the round.
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const roundRes = await postAdmin('/admin/rounds', { date: today, course: state.course || null });
+    // 2) Create the round, dated to the chosen play date (defaults to the
+    // device-local today) — not the finalize moment, which can differ when an
+    // imported round is approved later or a round wraps up late evening.
+    const playDate = state.playDate || localToday();
+    const roundRes = await postAdmin('/admin/rounds', { date: playDate, course: state.course || null });
     const round = await roundRes.json();
 
     // 3) Add each entry.
@@ -1070,6 +1093,7 @@ function exportRound() {
   const payload = {
     v: EXPORT_VERSION,
     course: state.course || '',
+    playDate: state.playDate || localToday(),
     exportedAt: new Date().toISOString(),
     players: state.players.map(p => ({
       rosterId: p.rosterId, name: p.name, tag: p.tag,
@@ -1138,6 +1162,10 @@ function importRound() {
       ace: !!p.ace, ctp: !!p.ctp, score: (p.score == null ? null : p.score)
     })),
     course: payload.course || '',
+    // Keep the exporter's play date so approval day ≠ play day is recorded
+    // right. Older exports lack it — fall back to the export timestamp's
+    // date, which is still closer to the truth than the approval date.
+    playDate: payload.playDate || String(payload.exportedAt || '').slice(0, 10) || '',
     finalized: null
   };
   save();
