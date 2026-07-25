@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#042a2b">
+<!-- PWA: manifest is served by the API so name/colors follow the deployment
+     theme; icons are static files at the site root. -->
+<link rel="manifest" href="/api/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Tags Round</title>
 <style>
   :root {
@@ -22,10 +29,18 @@
     --muted: #5b7374;
     --danger: #c0392b;         /* kept: destructive actions need red */
     --accent: #f4e04d;         /* banana-cream (ACE, tag output, tab underline) */
+    --accent-text: #4a3500;    /* text on accent fills; applyTheme() re-derives */
     --blue: #5eb1bf;           /* pacific-blue (CTP) */
+    --secondary-text: #042a2b; /* text on secondary fills; applyTheme() re-derives */
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Keyboard-visible focus for every interactive element. Secondary color
+     reads on both the dark header tabs and white cards; inputs keep their
+     own primary-colored :focus outline. */
+  button:focus-visible, [role="option"]:focus-visible {
+    outline: 2.5px solid var(--blue); outline-offset: 2px;
+  }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: var(--font);
@@ -180,8 +195,8 @@
   .badge-ace, .badge-ctp {
     display: inline-block; border-radius: 5px; padding: 1px 6px; letter-spacing: .3px;
   }
-  .badge-ace { background: var(--accent); color: #4a3500; }
-  .badge-ctp { background: var(--blue); color: #042a2b; }
+  .badge-ace { background: var(--accent); color: var(--accent-text); }
+  .badge-ctp { background: var(--blue); color: var(--secondary-text); }
   .row .score-in { width: 80px; }
   .row .x {
     background: none; border: none; color: var(--danger);
@@ -211,13 +226,13 @@
   .hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
   .tie-flag {
     font-size: 10px; font-weight: 800; letter-spacing: .3px;
-    background: var(--accent); color: #4a3500;
+    background: var(--accent); color: var(--accent-text);
     border-radius: 4px; padding: 1px 5px; vertical-align: middle;
   }
   .result-row .tag-out {
     min-width: 50px; height: 44px;
     display:flex;align-items:center;justify-content:center;
-    background: var(--accent); color: #4a3500;
+    background: var(--accent); color: var(--accent-text);
     border-radius: 9px; font-weight: 800; font-size: 18px;
   }
 
@@ -258,7 +273,7 @@
   .me-banner .num {
     min-width: 42px; height: 42px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    background: var(--accent); color: #4a3500;
+    background: var(--accent); color: var(--accent-text);
     border-radius: 9px; font-weight: 800; font-size: 16px;
   }
   .me-banner .name { font-weight: 700; }
@@ -318,7 +333,7 @@
 <!-- Top-level navigation between the two main views + admin -->
 <div class="tabs" id="topnav">
   <button id="nav-home" onclick="location.hash='#/'">Home</button>
-  <button id="nav-round" onclick="location.hash='#/round'">Play</button>
+  <button id="nav-round" onclick="location.hash='#/round'">Run round</button>
   <button id="nav-stats" onclick="location.hash='#/stats'">Stats</button>
   <button id="nav-admin" onclick="location.hash='#/admin'">Admin</button>
 </div>
@@ -335,7 +350,7 @@
     <div class="card">
       <h2>Current tag standings</h2>
       <p class="hint">Who holds each tag right now, updated after every finalized round. Tap your name to pin your tag to the top.</p>
-      <input type="search" id="standingsSearch" autocomplete="off" placeholder="Search players…" oninput="renderStandings()">
+      <input type="search" id="standingsSearch" autocomplete="off" placeholder="Search players…" aria-label="Search players" oninput="renderStandings()">
       <div id="standingsList"><div class="empty">Loading…</div></div>
     </div>
 
@@ -362,8 +377,9 @@
       <label for="pName">Name</label>
       <div class="typeahead">
         <input type="text" id="pName" autocomplete="off" placeholder="Start typing a roster name…"
+          role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="suggestions"
           oninput="onNameInput()" onkeydown="onNameKey(event)" onblur="onNameBlur()">
-        <div id="suggestions" class="suggestions" style="display:none"></div>
+        <div id="suggestions" class="suggestions" role="listbox" style="display:none"></div>
       </div>
       <div id="nameLocked" class="name-locked" style="display:none"></div>
       <p class="hint">Only players on the roster can be added. Manage the roster in the Admin tab.</p>
@@ -478,7 +494,7 @@
 
     <div class="card">
       <h2>Roster (<span id="rosterCount">0</span>)</h2>
-      <input type="search" id="rosterSearch" autocomplete="off" placeholder="Search roster…" oninput="renderRoster(roster)">
+      <input type="search" id="rosterSearch" autocomplete="off" placeholder="Search roster…" aria-label="Search roster" oninput="renderRoster(roster)">
       <div id="rosterList"><div class="empty">Loading…</div></div>
     </div>
   </section>
@@ -490,8 +506,9 @@
       <p class="hint">How tags changed hands over the season. Search for up to 8 players to compare — tag #1 is at the top.</p>
       <div class="typeahead">
         <input type="text" id="statsSearch" autocomplete="off" placeholder="Search players to add…"
+          role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="statsSugs"
           oninput="onStatsSearch()" onkeydown="onStatsSearchKey(event)" onblur="onStatsSearchBlur()">
-        <div id="statsSugs" class="suggestions" style="display:none"></div>
+        <div id="statsSugs" class="suggestions" role="listbox" style="display:none"></div>
       </div>
       <div id="statsPicker" class="chips"></div>
       <p class="hint" id="statsSelHint" style="display:none">Max 8 players on the chart — deselect one first.</p>
@@ -578,7 +595,7 @@ function router() {
   // Round sub-tabs only visible inside the round view
   document.getElementById('roundtabs').style.display = (route==='round') ? '' : 'none';
 
-  const subs = { home:'League home', round:'Play — run a round', admin:'Admin — manage roster', stats:'Stats — tag history' };
+  const subs = { home:'League home', round:'Run a round — players, scores, tags', admin:'Admin — manage roster', stats:'Stats — tag history' };
   document.getElementById('phaseSub').textContent = subs[route];
 
   if (route === 'home') {
@@ -684,15 +701,22 @@ function renderSuggestions(q) {
       const html = idx < 0 ? esc(r.name)
         : esc(r.name.slice(0, idx)) + '<span class="match">' +
           esc(r.name.slice(idx, idx + q.length)) + '</span>' + esc(r.name.slice(idx + q.length));
-      return `<div class="sug ${i===sugActive?'active':''}" onmousedown="pickSuggestion(${i})">${html}</div>`;
+      return `<div class="sug ${i===sugActive?'active':''}" role="option" id="sug-${i}" aria-selected="${i===sugActive}" onmousedown="pickSuggestion(${i})">${html}</div>`;
     }).join('');
   }
   box.style.display = '';
+  const input = document.getElementById('pName');
+  input.setAttribute('aria-expanded', 'true');
+  if (sugActive >= 0) input.setAttribute('aria-activedescendant', 'sug-' + sugActive);
+  else input.removeAttribute('aria-activedescendant');
 }
 
 function hideSuggestions() {
   document.getElementById('suggestions').style.display = 'none';
   sugItems = []; sugActive = -1;
+  const input = document.getElementById('pName');
+  input.setAttribute('aria-expanded', 'false');
+  input.removeAttribute('aria-activedescendant');
 }
 
 function pickSuggestion(i) {
@@ -1610,15 +1634,22 @@ function renderStatsSugs(q) {
       const html = idx < 0 ? esc(p.name)
         : esc(p.name.slice(0, idx)) + '<span class="match">' +
           esc(p.name.slice(idx, idx + q.length)) + '</span>' + esc(p.name.slice(idx + q.length));
-      return `<div class="sug ${i===statsSugActive?'active':''}" onmousedown="pickStatsSug(${i})">${html}<span class="sugtag">#${p.tag}</span></div>`;
+      return `<div class="sug ${i===statsSugActive?'active':''}" role="option" id="ssug-${i}" aria-selected="${i===statsSugActive}" onmousedown="pickStatsSug(${i})">${html}<span class="sugtag">#${p.tag}</span></div>`;
     }).join('');
   }
   box.style.display = '';
+  const input = document.getElementById('statsSearch');
+  input.setAttribute('aria-expanded', 'true');
+  if (statsSugActive >= 0) input.setAttribute('aria-activedescendant', 'ssug-' + statsSugActive);
+  else input.removeAttribute('aria-activedescendant');
 }
 
 function hideStatsSugs() {
   document.getElementById('statsSugs').style.display = 'none';
   statsSugItems = []; statsSugActive = -1;
+  const input = document.getElementById('statsSearch');
+  input.setAttribute('aria-expanded', 'false');
+  input.removeAttribute('aria-activedescendant');
 }
 
 function pickStatsSug(i) {
@@ -2082,9 +2113,24 @@ function applyTheme(t) {
     set('--green-dark', darken(t.primary, 0.35));
   }
   set('--accent', t.accent);
+  set('--accent-text', contrastText(t.accent));
   set('--blue', t.secondary);
+  set('--secondary-text', contrastText(t.secondary));
   set('--bg', t.bg);
   set('--font', t.font);
+}
+
+// Text color for a badge filled with `hex`: white on dark fills, a deep
+// tone-on-tone shade on light fills (mirrors the stock brown-on-banana-cream
+// look instead of flat black). Non-hex/unset input → null, keeping the
+// stylesheet default. YIQ ≥ 145 counts as "light".
+function contrastText(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 145 ? darken(hex, 0.75) : '#ffffff';
 }
 
 // Darken a #rrggbb hex color toward black by `amount` (0–1). Used to derive the

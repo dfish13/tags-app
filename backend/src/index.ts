@@ -37,6 +37,26 @@ api.get("/config", (_req, res) => {
   });
 });
 
+// PWA manifest, served by the API so the install name and colors follow the
+// per-deployment theme. Icons are static files at the site root (served by
+// the static-site service). scope/start_url are "/" — explicitly widened
+// past this file's /api/ directory default.
+api.get("/manifest.webmanifest", (_req, res) => {
+  res.type("application/manifest+json").json({
+    name: LEAGUE_NAME,
+    short_name: LEAGUE_NAME.length <= 12 ? LEAGUE_NAME : "Tags",
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    background_color: env("THEME_BG") ?? "#eef3f3",
+    theme_color: env("THEME_PRIMARY") ?? "#042a2b",
+    icons: [
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+  });
+});
+
 // Public read routes — no auth. Anyone can view players, tags, rounds, stats.
 api.use("/players", playersRouter);
 api.use("/tags", tagsRouter);
