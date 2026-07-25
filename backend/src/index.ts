@@ -4,6 +4,7 @@ import { playersRouter, playersAdminRouter } from "./routes/players.js";
 import { tagsRouter, tagsAdminRouter } from "./routes/tags.js";
 import { roundsRouter, roundsAdminRouter } from "./routes/rounds.js";
 import { standingsRouter } from "./routes/standings.js";
+import { statsRouter } from "./routes/stats.js";
 
 const app = express();
 app.use(express.json());
@@ -41,6 +42,7 @@ api.use("/players", playersRouter);
 api.use("/tags", tagsRouter);
 api.use("/rounds", roundsRouter);
 api.use("/standings", standingsRouter);
+api.use("/stats", statsRouter);
 
 // Admin write routes — all under /api/admin/*, gated by requireAdmin.
 // Cloudflare Access protects /api/admin/* at the edge with its own email

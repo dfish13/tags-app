@@ -220,6 +220,57 @@
     background: var(--accent); color: #4a3500;
     border-radius: 9px; font-weight: 800; font-size: 18px;
   }
+
+  /* ── Stats page: player chips + tag-history chart ── */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: #fff; color: var(--text);
+    border: 1.5px solid var(--line); border-radius: 20px;
+    padding: 5px 12px; font-size: 13px; font-weight: 600;
+    font-family: var(--font); cursor: pointer;
+  }
+  /* Selected chips double as the chart legend: the dot wears the series color
+     (set inline by JS); the text stays in ink per dataviz rules. */
+  .chip .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
+  .chip .x { color: var(--muted); font-weight: 700; margin-left: 2px; }
+  .sug .sugtag { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .range-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .rangebtn {
+    border: 1.5px solid var(--line); background: #fff; color: var(--muted);
+    border-radius: 20px; padding: 5px 12px; font-size: 13px; font-weight: 600;
+    font-family: var(--font); cursor: pointer;
+  }
+  .rangebtn.active {
+    border-color: var(--green); color: var(--green);
+    background: color-mix(in srgb, var(--green) 8%, #fff);
+  }
+  .range-custom { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .range-custom input[type="date"] { flex: 1; width: auto; }
+  .chart-wrap { position: relative; margin-top: 12px; }
+  .chart-wrap svg { display: block; width: 100%; height: auto; font-family: var(--font); }
+  .viz-tip {
+    position: absolute; display: none; pointer-events: none; z-index: 5;
+    background: #fff; border: 1px solid var(--line); border-radius: 9px;
+    padding: 8px 10px; font-size: 12px; min-width: 120px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.12);
+  }
+  .viz-tip .t-date { font-weight: 700; margin-bottom: 4px; }
+  .viz-tip .t-row { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+  .viz-tip .t-key { width: 12px; border-top: 3px solid; border-radius: 2px; flex-shrink: 0; }
+  .viz-tip .t-val { font-weight: 800; min-width: 30px; font-variant-numeric: tabular-nums; }
+  .viz-tip .t-name { color: var(--muted); }
+  .viz-tip .t-held { color: var(--muted); font-size: 10px; }
+  .stats-table-wrap { overflow-x: auto; margin-top: 8px; }
+  .stats-table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .stats-table th, .stats-table td {
+    padding: 6px 8px; text-align: right; white-space: nowrap;
+    border-bottom: 1px solid var(--line);
+  }
+  .stats-table th { color: var(--muted); font-size: 12px; }
+  .stats-table th:first-child, .stats-table td:first-child { text-align: left; }
+  .stats-table td { font-weight: 700; }
+  .stats-table td.held { color: var(--muted); font-weight: 400; }
 </style>
 </head>
 <body>
@@ -231,6 +282,7 @@
 <div class="tabs" id="topnav">
   <button id="nav-home" onclick="location.hash='#/'">Home</button>
   <button id="nav-round" onclick="location.hash='#/round'">Play</button>
+  <button id="nav-stats" onclick="location.hash='#/stats'">Stats</button>
   <button id="nav-admin" onclick="location.hash='#/admin'">Admin</button>
 </div>
 <!-- Round workflow sub-steps (only shown within the Round view) -->
@@ -388,6 +440,35 @@
       <div id="rosterList"><div class="empty">Loading…</div></div>
     </div>
   </section>
+
+  <!-- STATS -->
+  <section id="view-stats" style="display:none">
+    <div class="card">
+      <h2>Tag history</h2>
+      <p class="hint">How tags changed hands over the season. Search for up to 8 players to compare — tag #1 is at the top.</p>
+      <div class="typeahead">
+        <input type="text" id="statsSearch" autocomplete="off" placeholder="Search players to add…"
+          oninput="onStatsSearch()" onkeydown="onStatsSearchKey(event)" onblur="onStatsSearchBlur()">
+        <div id="statsSugs" class="suggestions" style="display:none"></div>
+      </div>
+      <div id="statsPicker" class="chips"></div>
+      <p class="hint" id="statsSelHint" style="display:none">Max 8 players on the chart — deselect one first.</p>
+      <div class="range-row">
+        <button class="rangebtn" id="range-all" onclick="setStatsRange('all')">Season</button>
+        <button class="rangebtn" id="range-90" onclick="setStatsRange('90')">Last 90d</button>
+        <button class="rangebtn" id="range-30" onclick="setStatsRange('30')">Last 30d</button>
+        <button class="rangebtn" id="range-custom" onclick="setStatsRange('custom')">Custom</button>
+      </div>
+      <div id="statsCustomRange" class="range-custom" style="display:none">
+        <input type="date" id="statsFrom" onchange="onStatsCustomDate()">
+        <span class="hint" style="margin:0">to</span>
+        <input type="date" id="statsTo" onchange="onStatsCustomDate()">
+      </div>
+      <div id="statsChartWrap" class="chart-wrap"></div>
+      <button class="linkbtn" id="statsTableBtn" style="display:none" onclick="toggleStatsTable()">Show table</button>
+      <div id="statsTable" class="stats-table-wrap" style="display:none"></div>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -420,7 +501,7 @@ function nextId() {
 let route = 'home';    // 'home' | 'round' | 'admin'
 let step = 'setup';    // active round sub-step when route === 'round'
 
-const ALL_SECTIONS = ['home','setup','scores','results','admin'];
+const ALL_SECTIONS = ['home','setup','scores','results','admin','stats'];
 
 function showSection(id) {
   for (const s of ALL_SECTIONS) {
@@ -433,23 +514,28 @@ function router() {
   const h = location.hash || '#/';
   if (h.startsWith('#/round')) route = 'round';
   else if (h.startsWith('#/admin')) route = 'admin';
+  else if (h.startsWith('#/stats')) route = 'stats';
   else route = 'home';
 
   // Top-nav active state
   document.getElementById('nav-home').classList.toggle('active', route==='home');
   document.getElementById('nav-round').classList.toggle('active', route==='round');
+  document.getElementById('nav-stats').classList.toggle('active', route==='stats');
   document.getElementById('nav-admin').classList.toggle('active', route==='admin');
 
   // Round sub-tabs only visible inside the round view
   document.getElementById('roundtabs').style.display = (route==='round') ? '' : 'none';
 
-  const subs = { home:'League home', round:'Play — run a round', admin:'Admin — manage roster' };
+  const subs = { home:'League home', round:'Play — run a round', admin:'Admin — manage roster', stats:'Stats — tag history' };
   document.getElementById('phaseSub').textContent = subs[route];
 
   if (route === 'home') {
     showSection('home');
     loadStandings();
     loadHistory();
+  } else if (route === 'stats') {
+    showSection('stats');
+    loadStatsPage();
   } else if (route === 'admin') {
     showSection('admin');
     refreshAdminAuth();
@@ -1144,6 +1230,451 @@ function fmtDate(d) {
   const [y,m,day] = String(d).slice(0,10).split('-');
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return `${months[+m-1]} ${+day}, ${y}`;
+}
+
+// ─── Stats: tag-history bump chart ────────────────────────
+// One line per selected player; x = finalized round (labeled by date),
+// y = tag number with #1 at the top. Rounds are evenly spaced (bump-chart
+// style) so trades stay readable even when round dates bunch up.
+const STATS_SEL_KEY = 'tags-stats-sel-v1';
+// Validated categorical palette (CVD-safe in this exact order — don't reorder
+// or extend). Color follows the player: a slot is claimed on select and only
+// freed on deselect, so toggling others never repaints a line.
+const SERIES_COLORS = ['#2a78d6','#1baf7a','#eda100','#008300','#4a3aa7','#e34948','#e87ba4','#eb6834'];
+const MAX_SERIES = SERIES_COLORS.length;
+
+let statsData = null;                              // { rounds, entries } from the API
+let statsSlots = new Array(MAX_SERIES).fill(null); // slot index → playerId (sticky colors)
+let statsTableOpen = false;
+let statsRange = { mode: 'all', from: null, to: null }; // date window over the rounds
+
+// Resolve the active range to [from, to] date-string bounds (null = open).
+// Presets anchor to the LATEST finalized round, not today, so a league whose
+// season ended months ago still shows meaningful windows.
+function statsRangeBounds() {
+  const all = statsData.rounds;
+  if (!all.length || statsRange.mode === 'all') return [null, null];
+  if (statsRange.mode === '90' || statsRange.mode === '30') {
+    const days = statsRange.mode === '90' ? 90 : 30;
+    const d = new Date(all[all.length - 1].date + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - (days - 1));
+    return [d.toISOString().slice(0, 10), null];
+  }
+  return [statsRange.from || null, statsRange.to || null];
+}
+
+// Rounds inside the active window, each with its index in the full timeline
+// (needed so carried tags survive a window that starts mid-season).
+function statsVisibleRounds() {
+  const [from, to] = statsRangeBounds();
+  const out = [];
+  statsData.rounds.forEach((r, i) => {
+    if ((!from || r.date >= from) && (!to || r.date <= to)) out.push({ r, orig: i });
+  });
+  return out;
+}
+
+function setStatsRange(mode) {
+  statsRange.mode = mode;
+  const custom = document.getElementById('statsCustomRange');
+  custom.style.display = mode === 'custom' ? '' : 'none';
+  if (mode === 'custom') {
+    // Prefill with the full season so the user narrows from something valid.
+    const all = statsData.rounds;
+    const fromEl = document.getElementById('statsFrom');
+    const toEl = document.getElementById('statsTo');
+    if (!fromEl.value) fromEl.value = all[0].date;
+    if (!toEl.value) toEl.value = all[all.length - 1].date;
+    statsRange.from = fromEl.value;
+    statsRange.to = toEl.value;
+  }
+  renderStats();
+}
+
+function onStatsCustomDate() {
+  statsRange.from = document.getElementById('statsFrom').value || null;
+  statsRange.to = document.getElementById('statsTo').value || null;
+  renderStats();
+}
+
+async function loadStatsPage() {
+  const wrap = document.getElementById('statsChartWrap');
+  try {
+    const res = await fetch(API_BASE + '/stats/tag-history');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    statsData = await res.json();
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty">Could not load stats (' + esc(e.message) + ').</div>';
+    return;
+  }
+  if (statsData.rounds.length === 0) {
+    document.getElementById('statsPicker').innerHTML = '';
+    wrap.innerHTML = '<div class="empty">No finalized rounds yet — stats appear after the first round is finalized.</div>';
+    return;
+  }
+  initStatsSelection();
+  renderStats();
+}
+
+// Unique players in the history with their most recent tag, best tag first.
+function statsPlayers() {
+  const order = new Map(statsData.rounds.map((r, i) => [r.id, i]));
+  const byId = new Map();
+  for (const e of statsData.entries) {
+    const idx = order.get(e.roundId);
+    const cur = byId.get(e.playerId);
+    if (!cur || idx > cur.idx) byId.set(e.playerId, { id: e.playerId, name: e.playerName, idx, tag: e.tagNumber });
+  }
+  return [...byId.values()].sort((a, b) => a.tag - b.tag);
+}
+
+// Restore the saved selection (dropping players no longer in the history);
+// first visit defaults to the five best current tags.
+function initStatsSelection() {
+  const players = statsPlayers();
+  const valid = new Set(players.map(p => p.id));
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STATS_SEL_KEY)); } catch (e) {}
+  if (Array.isArray(saved) && saved.length === MAX_SERIES) {
+    statsSlots = saved.map(id => (valid.has(id) ? id : null));
+  }
+  if (statsSlots.every(s => s == null)) {
+    players.slice(0, 5).forEach((p, i) => { statsSlots[i] = p.id; });
+  }
+}
+
+function statsSlotOf(playerId) { return statsSlots.indexOf(playerId); }
+
+function toggleStatsPlayer(playerId) {
+  const hint = document.getElementById('statsSelHint');
+  const slot = statsSlotOf(playerId);
+  if (slot >= 0) {
+    statsSlots[slot] = null;              // free the slot; others keep their colors
+  } else {
+    const free = statsSlots.indexOf(null);
+    if (free < 0) { hint.style.display = ''; return; }
+    statsSlots[free] = playerId;
+  }
+  hint.style.display = 'none';
+  localStorage.setItem(STATS_SEL_KEY, JSON.stringify(statsSlots));
+  renderStats();
+}
+
+function renderStats() {
+  for (const m of ['all', '90', '30', 'custom']) {
+    document.getElementById('range-' + m).classList.toggle('active', statsRange.mode === m);
+  }
+  renderStatsPicker();
+  renderStatsChart();
+  renderStatsTable();
+}
+
+// Only SELECTED players render as chips (they double as the chart legend);
+// with a ~200-player roster, everyone-as-a-chip doesn't scale. Players are
+// added via the typeahead search below and removed by tapping their chip.
+function renderStatsPicker() {
+  const el = document.getElementById('statsPicker');
+  const byId = new Map(statsPlayers().map(p => [p.id, p]));
+  el.innerHTML = statsSlots.map((pid, slot) => {
+    const p = pid != null ? byId.get(pid) : null;
+    if (!p) return '';
+    const c = SERIES_COLORS[slot];
+    return `<button class="chip on" style="border-color:${c}" onclick="toggleStatsPlayer(${p.id})" title="Remove ${esc(p.name)}">
+      <span class="dot" style="background:${c}"></span>${esc(p.name)}<span class="x">×</span></button>`;
+  }).join('');
+}
+
+// ── Stats player search (mirrors the Setup roster typeahead) ──
+let statsSugItems = [];
+let statsSugActive = -1;
+
+function onStatsSearch() {
+  const q = document.getElementById('statsSearch').value.trim().toLowerCase();
+  if (!q) { hideStatsSugs(); return; }
+  const selected = new Set(statsSlots.filter(id => id != null));
+  // statsPlayers() is sorted best-current-tag first, so matches rank sensibly.
+  statsSugItems = statsPlayers()
+    .filter(p => !selected.has(p.id) && p.name.toLowerCase().includes(q))
+    .slice(0, 10);
+  statsSugActive = -1;
+  renderStatsSugs(q);
+}
+
+function renderStatsSugs(q) {
+  const box = document.getElementById('statsSugs');
+  if (statsSugItems.length === 0) {
+    box.innerHTML = '<div class="none">No match — only players with a finalized round appear here.</div>';
+  } else {
+    box.innerHTML = statsSugItems.map((p, i) => {
+      const idx = p.name.toLowerCase().indexOf(q);
+      const html = idx < 0 ? esc(p.name)
+        : esc(p.name.slice(0, idx)) + '<span class="match">' +
+          esc(p.name.slice(idx, idx + q.length)) + '</span>' + esc(p.name.slice(idx + q.length));
+      return `<div class="sug ${i===statsSugActive?'active':''}" onmousedown="pickStatsSug(${i})">${html}<span class="sugtag">#${p.tag}</span></div>`;
+    }).join('');
+  }
+  box.style.display = '';
+}
+
+function hideStatsSugs() {
+  document.getElementById('statsSugs').style.display = 'none';
+  statsSugItems = []; statsSugActive = -1;
+}
+
+function pickStatsSug(i) {
+  const p = statsSugItems[i];
+  if (!p) return;
+  const input = document.getElementById('statsSearch');
+  input.value = '';
+  hideStatsSugs();
+  toggleStatsPlayer(p.id);   // adds (or shows the max-8 hint)
+  input.focus();             // keep the keyboard up for adding another
+}
+
+function onStatsSearchKey(e) {
+  if (document.getElementById('statsSugs').style.display === 'none') return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault(); statsSugActive = Math.min(statsSugActive + 1, statsSugItems.length - 1);
+    renderStatsSugs(document.getElementById('statsSearch').value.trim().toLowerCase());
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault(); statsSugActive = Math.max(statsSugActive - 1, 0);
+    renderStatsSugs(document.getElementById('statsSearch').value.trim().toLowerCase());
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (statsSugActive >= 0) pickStatsSug(statsSugActive);
+    else if (statsSugItems.length >= 1) pickStatsSug(0);
+  } else if (e.key === 'Escape') {
+    hideStatsSugs();
+  }
+}
+
+function onStatsSearchBlur() {
+  // Delay so a mousedown on a suggestion registers before we hide.
+  setTimeout(hideStatsSugs, 150);
+}
+
+// Build the plotted series: one per selected player, carrying the tag forward
+// through rounds they sat out (their tag doesn't move when they don't play).
+// Carry is computed over the FULL timeline first, then sliced to the visible
+// window — so a window opening mid-season still shows the tag each player
+// brought into it.
+function statsSeries() {
+  const all = statsData.rounds;
+  const vis = statsVisibleRounds();
+  const rIndex = new Map(all.map((r, i) => [r.id, i]));
+  const series = [];
+  statsSlots.forEach((pid, slot) => {
+    if (pid == null) return;
+    const byRound = new Array(all.length).fill(null);
+    let name = '';
+    for (const e of statsData.entries) {
+      if (e.playerId === pid) { byRound[rIndex.get(e.roundId)] = e.tagNumber; name = e.playerName; }
+    }
+    const timeline = new Array(all.length).fill(null);
+    let last = null;
+    for (let i = 0; i < all.length; i++) {
+      if (byRound[i] != null) { last = byRound[i]; timeline[i] = { tag: last, played: true }; }
+      else if (last != null) timeline[i] = { tag: last, played: false };
+    }
+    const pts = [];
+    vis.forEach((v, k) => {
+      const t = timeline[v.orig];
+      if (t) pts.push({ i: k, tag: t.tag, played: t.played });
+    });
+    if (pts.length) series.push({ pid, name, color: SERIES_COLORS[slot], pts });
+  });
+  return series;
+}
+
+// Geometry shared by the chart and its hover layer. n = visible round count.
+function statsLayout(series, n) {
+  const showLabels = series.length > 0 && series.length <= 4;
+  const M = { top: 14, right: showLabels ? 86 : 20, bottom: 34, left: 38 };
+  const W = 700, H = 380;
+  const plotW = W - M.left - M.right, plotH = H - M.top - M.bottom;
+  let lo = Infinity, hi = -Infinity;
+  for (const s of series) for (const p of s.pts) { lo = Math.min(lo, p.tag); hi = Math.max(hi, p.tag); }
+  if (!isFinite(lo)) { lo = 1; hi = 10; }
+  lo = Math.max(1, lo - 1); hi = hi + 1;
+  if (hi - lo < 4) hi = lo + 4; // don't over-zoom a tight cluster
+  const x = i => n === 1 ? M.left + plotW / 2 : M.left + (i / (n - 1)) * plotW;
+  const y = tag => M.top + ((tag - lo) / (hi - lo)) * plotH; // low tag = top
+  return { n, W, H, M, plotW, plotH, lo, hi, x, y, showLabels };
+}
+
+function renderStatsChart() {
+  const wrap = document.getElementById('statsChartWrap');
+  const vis = statsVisibleRounds();
+  const series = statsSeries();
+  document.getElementById('statsTableBtn').style.display = (series.length && vis.length) ? '' : 'none';
+  if (vis.length === 0) {
+    wrap.innerHTML = '<div class="empty">No finalized rounds in this date range.</div>';
+    return;
+  }
+  if (series.length === 0) {
+    wrap.innerHTML = '<div class="empty">Select players above to plot their tag history.</div>';
+    return;
+  }
+  const L = statsLayout(series, vis.length);
+  const svg = [];
+
+  // Y gridlines + ticks at clean integer steps (~6 lines). Tag #1 always
+  // gets a tick when it's in range — it's the number the league plays for.
+  const step = [1, 2, 5, 10, 20, 50].find(s => (L.hi - L.lo) / s <= 6) || 100;
+  if (L.lo === 1 && step > 1) {
+    svg.push(`<line x1="${L.M.left}" y1="${L.y(1)}" x2="${L.W - L.M.right}" y2="${L.y(1)}" stroke="var(--line)" stroke-width="1"/>`);
+    svg.push(`<text x="${L.M.left - 8}" y="${L.y(1) + 3.5}" text-anchor="end" font-size="11" fill="var(--muted)">1</text>`);
+  }
+  for (let t = Math.ceil(L.lo / step) * step; t <= L.hi; t += step) {
+    const yy = L.y(t);
+    svg.push(`<line x1="${L.M.left}" y1="${yy}" x2="${L.W - L.M.right}" y2="${yy}" stroke="var(--line)" stroke-width="1"/>`);
+    svg.push(`<text x="${L.M.left - 8}" y="${yy + 3.5}" text-anchor="end" font-size="11" fill="var(--muted)">${t}</text>`);
+  }
+
+  // X ticks: at most ~6 date labels, always including first and last round.
+  const every = Math.max(1, Math.ceil(L.n / 6));
+  for (let i = 0; i < L.n; i++) {
+    if (i % every !== 0 && i !== L.n - 1) continue;
+    if (i !== L.n - 1 && L.n > 1 && (L.n - 1 - i) < every * 0.6) continue; // avoid last-label collision
+    svg.push(`<text x="${L.x(i)}" y="${L.H - L.M.bottom + 18}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(fmtDateShort(vis[i].r.date))}</text>`);
+  }
+
+  // Lines: 2.5px with bump-style easing — each segment is a cubic whose
+  // control points sit at the x-midpoint at the two endpoint heights, so the
+  // curve never overshoots past a tag value a player actually held, and flat
+  // (held) stretches stay perfectly flat. Markers on played rounds only —
+  // an 8px dot with a 2px surface ring so crossings stay legible.
+  for (const s of series) {
+    let d = '', px = 0, py = 0;
+    s.pts.forEach((p, k) => {
+      const xx = L.x(p.i), yy = L.y(p.tag);
+      if (k === 0) d = `M${xx.toFixed(1)} ${yy.toFixed(1)}`;
+      else {
+        const xm = ((px + xx) / 2).toFixed(1);
+        d += ` C${xm} ${py.toFixed(1)}, ${xm} ${yy.toFixed(1)}, ${xx.toFixed(1)} ${yy.toFixed(1)}`;
+      }
+      px = xx; py = yy;
+    });
+    svg.push(`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`);
+  }
+  for (const s of series) {
+    for (const p of s.pts) {
+      if (!p.played) continue;
+      svg.push(`<circle cx="${L.x(p.i).toFixed(1)}" cy="${L.y(p.tag).toFixed(1)}" r="4" fill="${s.color}" stroke="var(--card)" stroke-width="2"/>`);
+    }
+  }
+
+  // Direct end labels for ≤4 series, nudged apart when lines converge.
+  if (L.showLabels) {
+    const labels = series.map(s => {
+      const p = s.pts[s.pts.length - 1];
+      return { name: s.name, yy: L.y(p.tag), xx: L.x(p.i) };
+    }).sort((a, b) => a.yy - b.yy);
+    for (let k = 1; k < labels.length; k++) {
+      if (labels[k].yy - labels[k - 1].yy < 14) labels[k].yy = labels[k - 1].yy + 14;
+    }
+    for (const lb of labels) {
+      svg.push(`<text x="${lb.xx + 10}" y="${lb.yy + 4}" font-size="11" font-weight="600" fill="var(--text)">${esc(lb.name)}</text>`);
+    }
+  }
+
+  // Crosshair (hidden until hover) + a full-plot hit rect for the hover layer.
+  svg.push(`<line id="statsXhair" x1="0" y1="${L.M.top}" x2="0" y2="${L.H - L.M.bottom}" stroke="var(--muted)" stroke-width="1" style="display:none"/>`);
+  svg.push(`<rect id="statsHit" x="${L.M.left}" y="${L.M.top}" width="${L.plotW}" height="${L.plotH}" fill="transparent"/>`);
+
+  wrap.innerHTML = `<svg viewBox="0 0 ${L.W} ${L.H}" role="img" aria-label="Tag history chart">${svg.join('')}</svg><div class="viz-tip" id="statsTip"></div>`;
+  bindStatsHover(wrap, series, L, vis);
+}
+
+// Crosshair + tooltip: snap to the nearest round, list every plotted series at
+// that x (best tag first). Values lead; names follow. DOM built via
+// textContent — player names are data, not markup.
+function bindStatsHover(wrap, series, L, vis) {
+  const svgEl = wrap.querySelector('svg');
+  const hit = wrap.querySelector('#statsHit');
+  const xhair = wrap.querySelector('#statsXhair');
+  const tip = wrap.querySelector('#statsTip');
+
+  const show = (clientX) => {
+    const rect = svgEl.getBoundingClientRect();
+    const scale = L.W / rect.width;
+    const sx = (clientX - rect.left) * scale;
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < L.n; i++) {
+      const d = Math.abs(L.x(i) - sx);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    xhair.setAttribute('x1', L.x(best)); xhair.setAttribute('x2', L.x(best));
+    xhair.style.display = '';
+
+    tip.replaceChildren();
+    const dt = document.createElement('div');
+    dt.className = 't-date';
+    const r = vis[best].r;
+    dt.textContent = fmtDate(r.date) + (r.course ? ' · ' + r.course : '');
+    tip.appendChild(dt);
+    const rows = [];
+    for (const s of series) {
+      const p = s.pts.find(p => p.i === best);
+      if (p) rows.push({ s, p });
+    }
+    rows.sort((a, b) => a.p.tag - b.p.tag);
+    for (const { s, p } of rows) {
+      const row = document.createElement('div'); row.className = 't-row';
+      const key = document.createElement('span'); key.className = 't-key'; key.style.borderTopColor = s.color;
+      const val = document.createElement('span'); val.className = 't-val'; val.textContent = '#' + p.tag;
+      const nm = document.createElement('span'); nm.className = 't-name'; nm.textContent = s.name;
+      row.append(key, val, nm);
+      if (!p.played) { const h = document.createElement('span'); h.className = 't-held'; h.textContent = '(held)'; row.appendChild(h); }
+      tip.appendChild(row);
+    }
+
+    tip.style.display = 'block';
+    const px = L.x(best) / scale;                 // css px within wrap
+    const flip = px > rect.width * 0.6;
+    tip.style.left = flip ? '' : (px + 12) + 'px';
+    tip.style.right = flip ? (rect.width - px + 12) + 'px' : '';
+    tip.style.top = '10px';
+  };
+  const hide = () => { xhair.style.display = 'none'; tip.style.display = 'none'; };
+  hit.addEventListener('pointermove', e => show(e.clientX));
+  hit.addEventListener('pointerdown', e => show(e.clientX));
+  hit.addEventListener('pointerleave', hide);
+}
+
+// Table view of the same data (also the accessibility fallback for the
+// lighter series hues): one row per round, one column per selected player.
+function renderStatsTable() {
+  const box = document.getElementById('statsTable');
+  const vis = statsVisibleRounds();
+  const series = statsSeries();
+  const showable = statsTableOpen && series.length && vis.length;
+  box.style.display = showable ? '' : 'none';
+  document.getElementById('statsTableBtn').textContent = statsTableOpen ? 'Hide table' : 'Show table';
+  if (!showable) return;
+  const head = '<tr><th>Round</th>' + series.map(s => `<th>${esc(s.name)}</th>`).join('') + '</tr>';
+  const body = vis.map((v, i) => {
+    const cells = series.map(s => {
+      const p = s.pts.find(p => p.i === i);
+      if (!p) return '<td></td>';
+      return `<td${p.played ? '' : ' class="held"'}>${p.tag}</td>`;
+    }).join('');
+    return `<tr><td>${esc(fmtDateShort(v.r.date))}</td>${cells}</tr>`;
+  }).join('');
+  box.innerHTML = `<table class="stats-table">${head}${body}</table>`;
+}
+
+function toggleStatsTable() {
+  statsTableOpen = !statsTableOpen;
+  renderStatsTable();
+}
+
+// "Jul 4" — short date for axis ticks and table rows.
+function fmtDateShort(d) {
+  if (!d) return '';
+  const [y, m, day] = String(d).slice(0, 10).split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[+m - 1]} ${+day}`;
 }
 
 let rosterEditId = null; // id of the roster player whose edit panel is open
