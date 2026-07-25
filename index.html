@@ -247,6 +247,26 @@
   }
   .range-custom { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .range-custom input[type="date"] { flex: 1; width: auto; }
+
+  /* "Your tag" pinned banner on the standings list */
+  .me-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px; margin: 10px 0 4px;
+    background: color-mix(in srgb, var(--accent) 22%, #fff);
+    border: 1.5px solid var(--accent); border-radius: 10px;
+  }
+  .me-banner .num {
+    min-width: 42px; height: 42px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--accent); color: #4a3500;
+    border-radius: 9px; font-weight: 800; font-size: 16px;
+  }
+  .me-banner .name { font-weight: 700; }
+  .me-banner .meta { font-size: 12px; color: var(--muted); }
+  .me-banner .x {
+    background: none; border: none; color: var(--muted);
+    font-size: 22px; cursor: pointer; padding: 4px 8px;
+  }
   .chart-wrap { position: relative; margin-top: 12px; }
   .chart-wrap svg { display: block; width: 100%; height: auto; font-family: var(--font); }
   .viz-tip {
@@ -297,7 +317,8 @@
   <section id="view-home" style="display:none">
     <div class="card">
       <h2>Current tag standings</h2>
-      <p class="hint">Who holds each tag right now, updated after every finalized round.</p>
+      <p class="hint">Who holds each tag right now, updated after every finalized round. Tap your name to pin your tag to the top.</p>
+      <input type="search" id="standingsSearch" autocomplete="off" placeholder="Search players…" oninput="renderStandings()">
       <div id="standingsList"><div class="empty">Loading…</div></div>
     </div>
 
@@ -440,6 +461,7 @@
 
     <div class="card">
       <h2>Roster (<span id="rosterCount">0</span>)</h2>
+      <input type="search" id="rosterSearch" autocomplete="off" placeholder="Search roster…" oninput="renderRoster(roster)">
       <div id="rosterList"><div class="empty">Loading…</div></div>
     </div>
   </section>
@@ -663,9 +685,20 @@ function pickSuggestion(i) {
   input.value = r.name;
   hideSuggestions();
   const lock = document.getElementById('nameLocked');
-  lock.textContent = '✓ ' + r.name + ' (roster)';
+  // Prefill the incoming tag from the DB's current holding — hand-typing 30
+  // tags per round is 30 typo chances that corrupt redistribution. Kept
+  // editable (and select()ed so typing overwrites) because untracked pickup
+  // rounds can leave the DB stale vs the physical tag in hand.
+  const tagInput = document.getElementById('pTag');
+  if (r.tagNumber != null) {
+    tagInput.value = r.tagNumber;
+    lock.textContent = '✓ ' + r.name + ' — current tag #' + r.tagNumber + ' (edit if outdated)';
+  } else {
+    lock.textContent = '✓ ' + r.name + ' (roster)';
+  }
   lock.style.display = '';
-  document.getElementById('pTag').focus();
+  tagInput.focus();
+  tagInput.select();
 }
 
 function onNameKey(e) {
@@ -1175,24 +1208,74 @@ function importRound() {
 }
 
 // League Home: current tag standings (public, from /api/standings).
+// The list is searchable, and a player can tap their own row to pin a
+// "your tag" banner to the top (remembered per device in localStorage) —
+// with a 200-player roster, "what's my tag" shouldn't take 15 screens
+// of scrolling to answer.
+const ME_KEY = 'tags-me-v1';
+let standingsRows = [];
+
+function getMe() {
+  try { return JSON.parse(localStorage.getItem(ME_KEY)); } catch (e) { return null; }
+}
+
 async function loadStandings() {
   const el = document.getElementById('standingsList');
   try {
     const res = await fetch(API_BASE + '/standings');
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const rows = await res.json();
-    if (rows.length === 0) {
-      el.innerHTML = '<div class="empty">No tags assigned yet. Finalize a round to populate standings.</div>';
-    } else {
-      el.innerHTML = rows.map(r => `
-        <div class="row">
-          <div class="num">${r.tagNumber}</div>
-          <div class="name">${esc(r.playerName)}</div>
-        </div>`).join('');
-    }
+    standingsRows = await res.json();
+    renderStandings();
   } catch (e) {
     el.innerHTML = '<div class="empty">Could not load standings (' + esc(e.message) + ').</div>';
   }
+}
+
+function renderStandings() {
+  const el = document.getElementById('standingsList');
+  if (standingsRows.length === 0) {
+    el.innerHTML = '<div class="empty">No tags assigned yet. Finalize a round to populate standings.</div>';
+    return;
+  }
+  const q = (document.getElementById('standingsSearch').value || '').trim().toLowerCase();
+  const me = getMe();
+  let html = '';
+  if (me) {
+    const mine = standingsRows.find(r => r.playerId === me.id);
+    html += `
+      <div class="me-banner">
+        <div class="num">${mine ? mine.tagNumber : '—'}</div>
+        <div style="flex:1">
+          <div class="name">${esc(me.name)}</div>
+          <div class="meta">${mine ? 'your tag' : 'no tag right now'}</div>
+        </div>
+        <button class="x" title="Unpin" onclick="pinMe(${me.id})">×</button>
+      </div>`;
+  }
+  const rows = q ? standingsRows.filter(r => r.playerName.toLowerCase().includes(q)) : standingsRows;
+  if (rows.length === 0) {
+    html += '<div class="empty">No players match.</div>';
+  } else {
+    html += rows.map(r => `
+      <div class="row selectable" onclick="pinMe(${r.playerId})">
+        <div class="num">${r.tagNumber}</div>
+        <div class="name">${esc(r.playerName)}</div>
+        ${me && me.id === r.playerId ? '<div class="meta">pinned</div>' : ''}
+      </div>`).join('');
+  }
+  el.innerHTML = html;
+}
+
+// Tap a row to pin that player as "me"; tap again (or the banner ×) to unpin.
+function pinMe(playerId) {
+  const me = getMe();
+  if (me && me.id === playerId) {
+    localStorage.removeItem(ME_KEY);
+  } else {
+    const row = standingsRows.find(r => r.playerId === playerId);
+    if (row) localStorage.setItem(ME_KEY, JSON.stringify({ id: row.playerId, name: row.playerName }));
+  }
+  renderStandings();
 }
 
 // League Home: history of finalized rounds. Tap one to expand its assignments.
@@ -1725,6 +1808,12 @@ function renderRoster(list) {
   const el = document.getElementById('rosterList');
   if (list.length === 0) {
     el.innerHTML = '<div class="empty">No players in the roster yet.</div>';
+    return;
+  }
+  const q = (document.getElementById('rosterSearch').value || '').trim().toLowerCase();
+  if (q) list = list.filter(p => p.name.toLowerCase().includes(q));
+  if (list.length === 0) {
+    el.innerHTML = '<div class="empty">No players match.</div>';
     return;
   }
   // Edit controls only appear when signed in as admin (adminEmail set).
