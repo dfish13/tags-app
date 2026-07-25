@@ -267,6 +267,23 @@
     background: none; border: none; color: var(--muted);
     font-size: 22px; cursor: pointer; padding: 4px 8px;
   }
+  /* Standings extras: movement deltas, history shortcut, top-10 expander.
+     Delta color stays on-theme: direction is carried by the arrow glyph, so
+     up just gets primary emphasis and down recedes to muted. */
+  .delta { font-size: 12px; font-weight: 800; white-space: nowrap; }
+  .delta.up { color: var(--green); }
+  .delta.down { color: var(--muted); }
+  .row .rmeta {
+    display: flex; flex-direction: column; align-items: flex-end;
+    gap: 1px; flex-shrink: 0;
+  }
+  .row .rmeta .date { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .row .hist, .me-banner .hist {
+    background: none; border: none; color: var(--muted);
+    font-size: 24px; line-height: 1; font-weight: 400;
+    padding: 4px 2px 6px 8px; cursor: pointer; flex-shrink: 0;
+  }
+  .showall { display: block; width: 100%; text-align: center; padding: 12px 0 4px; }
   .chart-wrap { position: relative; margin-top: 12px; }
   .chart-wrap svg { display: block; width: 100%; height: auto; font-family: var(--font); }
   .viz-tip {
@@ -1226,10 +1243,46 @@ async function loadStandings() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     standingsRows = await res.json();
     renderStandings();
+    loadMovement(); // deltas fill in when they arrive; rows render without them first
   } catch (e) {
     el.innerHTML = '<div class="empty">Could not load standings (' + esc(e.message) + ').</div>';
   }
 }
+
+// Tag movement vs the most recent finalized round: participants' delta is
+// incoming − assigned (positive = climbed). Non-participants get no arrow —
+// their tag didn't move.
+let movement = null; // Map playerId → delta, or null until loaded
+
+async function loadMovement() {
+  try {
+    const res = await fetch(API_BASE + '/rounds');
+    if (!res.ok) return;
+    const all = await res.json();
+    const latest = all.find(r => r.status === 'finalized'); // newest-first
+    if (!latest) { movement = new Map(); return; }
+    const detRes = await fetch(API_BASE + '/rounds/' + latest.id);
+    if (!detRes.ok) return;
+    const det = await detRes.json();
+    movement = new Map();
+    for (const e of det.entries || []) {
+      if (e.incomingNumber != null && e.assignedNumber != null) {
+        movement.set(e.playerId, e.incomingNumber - e.assignedNumber);
+      }
+    }
+    renderStandings();
+  } catch (e) { /* no deltas — rows simply omit them */ }
+}
+
+let standingsExpanded = false; // top-10 collapse state (search always shows all matches)
+
+function standingsDeltaHtml(playerId) {
+  const d = movement ? movement.get(playerId) : undefined;
+  if (d > 0) return `<span class="delta up">▲${d}</span>`;
+  if (d < 0) return `<span class="delta down">▼${-d}</span>`;
+  return '';
+}
+
 
 function renderStandings() {
   const el = document.getElementById('standingsList');
@@ -1242,26 +1295,41 @@ function renderStandings() {
   let html = '';
   if (me) {
     const mine = standingsRows.find(r => r.playerId === me.id);
+    const sinceTxt = mine && mine.since ? ' · since ' + fmtDateShort(String(mine.since).slice(0, 10)) : '';
     html += `
       <div class="me-banner">
         <div class="num">${mine ? mine.tagNumber : '—'}</div>
         <div style="flex:1">
-          <div class="name">${esc(me.name)}</div>
-          <div class="meta">${mine ? 'your tag' : 'no tag right now'}</div>
+          <div class="name">${esc(me.name)} ${standingsDeltaHtml(me.id)}</div>
+          <div class="meta">${mine ? 'your tag' + sinceTxt : 'no tag right now'}</div>
         </div>
+        <button class="hist" title="Tag history" onclick="location.hash='#/stats?p=${me.id}'">›</button>
         <button class="x" title="Unpin" onclick="pinMe(${me.id})">×</button>
       </div>`;
   }
   const rows = q ? standingsRows.filter(r => r.playerName.toLowerCase().includes(q)) : standingsRows;
+  // Collapse to the top 10 unless searching or expanded — keeps the Round
+  // history card reachable instead of buried under 200 rows.
+  const collapsed = !q && !standingsExpanded && rows.length > 10;
+  const shown = collapsed ? rows.slice(0, 10) : rows;
   if (rows.length === 0) {
     html += '<div class="empty">No players match.</div>';
   } else {
-    html += rows.map(r => `
+    html += shown.map(r => `
       <div class="row selectable" onclick="pinMe(${r.playerId})">
         <div class="num">${r.tagNumber}</div>
-        <div class="name">${esc(r.playerName)}</div>
-        ${me && me.id === r.playerId ? '<div class="meta">pinned</div>' : ''}
+        <div class="name">${esc(r.playerName)}${me && me.id === r.playerId ? ' <span class="meta">pinned</span>' : ''}</div>
+        <div class="rmeta">
+          ${standingsDeltaHtml(r.playerId)}
+          ${r.since ? `<span class="date">${fmtDateShort(String(r.since).slice(0, 10))}</span>` : ''}
+        </div>
+        <button class="hist" title="Tag history" onclick="event.stopPropagation(); location.hash='#/stats?p=${r.playerId}'">›</button>
       </div>`).join('');
+  }
+  if (collapsed) {
+    html += `<button class="linkbtn showall" onclick="standingsExpanded = true; renderStandings()">Show all ${rows.length} players ▾</button>`;
+  } else if (!q && standingsExpanded && rows.length > 10) {
+    html += `<button class="linkbtn showall" onclick="standingsExpanded = false; renderStandings()">Show top 10 ▴</button>`;
   }
   el.innerHTML = html;
 }
@@ -1424,6 +1492,22 @@ async function loadStatsPage() {
     return;
   }
   initStatsSelection();
+  // Deep link from standings: #/stats?p=<playerId> shows just that player.
+  // The param is consumed then stripped so later visits keep normal state.
+  const qs = location.hash.split('?')[1];
+  const pid = qs ? Number(new URLSearchParams(qs).get('p')) : NaN;
+  if (Number.isInteger(pid)) {
+    history.replaceState(null, '', location.pathname + '#/stats');
+    if (statsPlayers().some(p => p.id === pid)) {
+      statsSlots = new Array(MAX_SERIES).fill(null);
+      statsSlots[0] = pid;
+      localStorage.setItem(STATS_SEL_KEY, JSON.stringify(statsSlots));
+    } else {
+      const hint = document.getElementById('statsSelHint');
+      hint.textContent = 'No finalized-round history for that player yet.';
+      hint.style.display = '';
+    }
+  }
   renderStats();
 }
 
@@ -1463,7 +1547,12 @@ function toggleStatsPlayer(playerId) {
     statsSlots[slot] = null;              // free the slot; others keep their colors
   } else {
     const free = statsSlots.indexOf(null);
-    if (free < 0) { hint.style.display = ''; return; }
+    if (free < 0) {
+      // Reset the text — the deep-link path may have repurposed this hint.
+      hint.textContent = 'Max 8 players on the chart — deselect one first.';
+      hint.style.display = '';
+      return;
+    }
     statsSlots[free] = playerId;
   }
   hint.style.display = 'none';
