@@ -2151,6 +2151,12 @@ function darken(hex, amount) {
 window.addEventListener('hashchange', router);
 loadConfig();
 router();
+
+// Offline support: sw.js caches the shell and last-known API reads, serving
+// them only when the network fails (see sw.js for the strategy map).
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('/sw.js').catch(() => { /* non-fatal */ });
+}
 </script>
 </body>
 </html>
