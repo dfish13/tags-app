@@ -8,6 +8,13 @@
       "when": 1783004726821,
       "tag": "0000_clean_monster_badoon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785120905348,
+      "tag": "0001_loud_fallen_one",
+      "breakpoints": true
     }
   ]
 }

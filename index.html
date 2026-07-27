@@ -540,16 +540,25 @@ function load() {
     if (s && Array.isArray(s.players)) {
       if (typeof s.course !== 'string') s.course = '';
       if (typeof s.playDate !== 'string') s.playDate = '';
+      if (typeof s.clientKey !== 'string') s.clientKey = '';
       if (!('finalized' in s)) s.finalized = null; // server result once finalized
       return s;
     }
   } catch (e) {}
-  return { players: [], course: '', playDate: '', finalized: null };
+  return { players: [], course: '', playDate: '', clientKey: '', finalized: null };
 }
 function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
 
 function setCourse(v) { state.course = String(v || '').trim(); save(); }
 function setPlayDate(v) { state.playDate = String(v || '').trim(); save(); }
+
+// Idempotency key for the one-shot finalize. Minted once per local round and
+// persisted, so retrying a finalize that already committed server-side
+// replays that round rather than creating a duplicate.
+function newClientKey() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return 'k-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+}
 
 // Today's date in the DEVICE's timezone (YYYY-MM-DD). Deliberately not
 // toISOString(): that is UTC, which rolls evening US rounds onto tomorrow.
@@ -810,7 +819,9 @@ function setScore(id, val) {
 
 function resetRound() {
   if (!confirm('Clear all players and start a new round?')) return;
-  state = { players: [], course: '', playDate: '', finalized: null };
+  // A fresh round must get a fresh clientKey, or finalizing it would replay
+  // the previous round instead of saving this one.
+  state = { players: [], course: '', playDate: '', clientKey: '', finalized: null };
   save();
   document.getElementById('rCourse').value = '';
   goStep('setup');
@@ -1023,10 +1034,12 @@ function adminSignOut() {
 }
 
 // ─── Finalize: push the local round to the API and lock in server results ──
-// Setup + Scores stay local; only here do we persist. Steps: map tag numbers
-// to tag-table ids, create the round, add each entry, then finalize. The
-// finalize response carries the server's authoritative assigned tags, which
-// become the displayed results.
+// Setup + Scores stay local; only here do we persist. One request to
+// /admin/rounds/complete does the whole thing in a single DB transaction, so
+// an interrupted finalize can't strand a half-built round. The request
+// carries a clientKey minted once per local round: if a retry follows a
+// request that actually committed, the server replays that round instead of
+// redistributing tags a second time.
 async function finalizeRound() {
   const btn = document.getElementById('finalizeBtn');
   if (state.players.length === 0) { showFinalizeMsg('Add players first.', true); return; }
@@ -1036,69 +1049,46 @@ async function finalizeRound() {
   const who = await fetchAdminIdentity();
   if (!who) { showFinalizeMsg('Admin sign-in required — redirecting…', true); setTimeout(adminSignIn, 800); return; }
 
+  // Mint (once) and persist the idempotency key before sending, so it
+  // survives a reload mid-request and a retry reuses it.
+  if (!state.clientKey) { state.clientKey = newClientKey(); save(); }
+
   btn.disabled = true;
-  showFinalizeMsg('Saving…', false);
+  showFinalizeMsg('Saving… don’t close this page.', false);
   try {
-    // 1) Map incoming tag numbers → tag-table ids.
-    const tagsRes = await fetch(API_BASE + '/tags', { credentials: 'include' });
-    if (!tagsRes.ok) throw new Error('Could not load tags (HTTP ' + tagsRes.status + ')');
-    const allTags = await tagsRes.json();
-    const numToId = new Map(allTags.map(t => [t.number, t.id]));
-    const idToNum = new Map(allTags.map(t => [t.id, t.number]));
-    for (const p of state.players) {
-      if (!numToId.has(p.tag)) throw new Error('Tag #' + p.tag + ' does not exist on the server.');
-    }
-
-    // 2) Create the round, dated to the chosen play date (defaults to the
-    // device-local today) — not the finalize moment, which can differ when an
-    // imported round is approved later or a round wraps up late evening.
-    const playDate = state.playDate || localToday();
-    const roundRes = await postAdmin('/admin/rounds', { date: playDate, course: state.course || null });
-    const round = await roundRes.json();
-
-    // 3) Add each entry.
-    for (const p of state.players) {
-      await postAdmin('/admin/rounds/' + round.id + '/entries', {
+    const res = await postAdmin('/admin/rounds/complete', {
+      clientKey: state.clientKey,
+      // The chosen play date (defaults to device-local today) — not the
+      // finalize moment, which differs when an imported round is approved
+      // later or a round wraps up late evening.
+      date: state.playDate || localToday(),
+      course: state.course || null,
+      players: state.players.map(p => ({
         playerId: p.rosterId,
-        incomingTagId: numToId.get(p.tag),
+        tagNumber: p.tag,
+        score: (p.score === undefined ? null : p.score),
         acePool: !!p.ace,
         ctp: !!p.ctp
-      });
-    }
+      }))
+    });
+    const finalized = await res.json();
 
-    // 3b) Set scores for players who have one. The entries POST doesn't take a
-    // score (defaults to null/DNF), so we PATCH each scored entry after.
-    // Re-fetch the round to get entry ids keyed by player.
-    const withEntries = await (await fetch(API_BASE + '/rounds/' + round.id, { credentials: 'include' })).json();
-    const entryByPlayer = new Map(withEntries.entries.map(e => [e.playerId, e.id]));
-    for (const p of state.players) {
-      if (p.score !== null && p.score !== undefined) {
-        const entryId = entryByPlayer.get(p.rosterId);
-        if (entryId != null) {
-          await patchAdmin('/admin/rounds/' + round.id + '/entries/' + entryId, { score: p.score });
-        }
-      }
-    }
-
-    // 4) Finalize — returns the round with server-assigned tags.
-    const finalRes = await postAdmin('/admin/rounds/' + round.id + '/finalize', {});
-    const finalized = await finalRes.json();
-
-    // Build the display rows from the server result, ordered by assigned tag.
-    const byPlayer = new Map(state.players.map(p => [p.rosterId, p]));
+    // Server returns entries already enriched with names and tag numbers.
     const rows = finalized.entries
       .map(e => ({
-        name: (byPlayer.get(e.playerId) || {}).name || ('Player ' + e.playerId),
-        assignedNumber: idToNum.get(e.assignedTagId),
-        incomingNumber: idToNum.get(e.incomingTagId),
+        name: e.playerName,
+        assignedNumber: e.assignedNumber,
+        incomingNumber: e.incomingNumber,
         score: e.score,
         dnf: e.score === null || e.score === undefined
       }))
       .sort((a, b) => a.assignedNumber - b.assignedNumber);
 
-    state.finalized = { roundId: round.id, course: state.course || '', rows };
+    state.finalized = { roundId: finalized.id, course: state.course || '', rows };
     save();
-    showFinalizeMsg('Round finalized and saved.', false);
+    showFinalizeMsg(finalized.replayed
+      ? 'This round was already finalized — showing the saved result.'
+      : 'Round finalized and saved.', false);
     render();
   } catch (e) {
     if (String(e.message).includes('Failed to fetch')) {
@@ -1240,6 +1230,7 @@ function importRound() {
     // right. Older exports lack it — fall back to the export timestamp's
     // date, which is still closer to the truth than the approval date.
     playDate: payload.playDate || String(payload.exportedAt || '').slice(0, 10) || '',
+    clientKey: '', // distinct round → its own idempotency key
     finalized: null
   };
   save();

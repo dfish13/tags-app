@@ -86,6 +86,29 @@ api.use("/admin", admin);
 
 app.use("/api", api);
 
+// Error handler (must come last, and must take 4 args to be recognized).
+// Turns an unexpected failure into a 500 instead of a dead process.
+app.use(
+  (
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction
+  ) => {
+    console.error("unhandled error:", err);
+    if (res.headersSent) return;
+    res.status(500).json({ error: "Internal server error" });
+  }
+);
+
+// Last-resort guard: an async handler that throws without passing the error to
+// next() would otherwise take the whole API down (Express 4 doesn't catch
+// those). Log and keep serving — one bad request must not deny service to the
+// league.
+process.on("unhandledRejection", (err) => {
+  console.error("unhandled rejection:", err);
+});
+
 const port = Number(process.env.PORT) || 3001;
 app.listen(port, () => {
   console.log(`tags-app API listening on :${port}`);

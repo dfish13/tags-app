@@ -47,6 +47,12 @@ export const rounds = pgTable("rounds", {
   status: text("status", { enum: ["open", "scoring", "finalized"] })
     .default("open")
     .notNull(),
+  // Idempotency key for the one-shot finalize endpoint. The client mints it
+  // once per local round and resends it on retry, so an interrupted request
+  // whose transaction actually committed returns THAT round instead of
+  // redistributing tags a second time. Null for rounds built incrementally
+  // through the step-by-step admin routes.
+  clientKey: text("client_key").unique(),
 });
 
 // One row per player per round: their incoming tag, score, and (once
