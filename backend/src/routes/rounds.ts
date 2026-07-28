@@ -1,8 +1,28 @@
 import { Router } from "express";
-import { eq, and, inArray, desc, sql } from "drizzle-orm";
+import { eq, and, inArray, desc, asc, sql, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "../db/client.js";
 import { rounds, roundEntries, tags, tagHolders, players } from "../db/schema.js";
+import {
+  requireRoundCode,
+  codeFailureLimiter,
+  type RoundCodeRequest,
+} from "../middleware/requireRoundCode.js";
+import { generateCode, normalizeCode } from "../lib/roundCode.js";
+import { clientIp } from "../lib/rateLimit.js";
+
+// Columns of `rounds` safe to serve publicly. Spelled out rather than
+// `select()` because the table carries `join_code` (and `client_key`), and
+// spreading a whole row into a response would hand the join code to anyone who
+// asks for the round. `joinable` reports whether a code EXISTS without ever
+// carrying its value. Every public/code-gated response builds from this.
+const roundPublicColumns = {
+  id: rounds.id,
+  date: rounds.date,
+  course: rounds.course,
+  status: rounds.status,
+  joinable: sql<boolean>`(${rounds.joinCode} is not null)`,
+};
 
 // ---- Public read routes, mounted at /rounds ----
 
@@ -25,32 +45,254 @@ roundsRouter.get("/", async (_req, res) => {
   res.json(all);
 });
 
+// Rounds currently open for check-in, soonest first. Public and code-free: the
+// EXISTENCE of a live round is league news ("we're playing at Maple Hill"),
+// only the code to write to it is secret. Drives the Join card on Home.
+roundsRouter.get("/live", async (_req, res) => {
+  const live = await db
+    .select({
+      ...roundPublicColumns,
+      playerCount: sql<number>`count(${roundEntries.id})::int`,
+    })
+    .from(rounds)
+    .leftJoin(roundEntries, eq(roundEntries.roundId, rounds.id))
+    .where(and(ne(rounds.status, "finalized"), sql`${rounds.joinCode} is not null`))
+    .groupBy(rounds.id)
+    .orderBy(asc(rounds.date), asc(rounds.id));
+  res.json(live);
+});
+
+// Exchange a code for the round it belongs to. Discovery step for a player who
+// has been read a code at the course and doesn't know the round id — every
+// write after this uses /rounds/:id/* with the same code. Rate-limited on the
+// same per-IP failure budget as the code gate, since this route is the one
+// that maps the whole code space.
+roundsRouter.post("/join", async (req, res) => {
+  const ip = clientIp(req);
+  const limited = codeFailureLimiter.isLimited(ip);
+  if (limited) {
+    res.set("Retry-After", String(limited.retryAfterSec));
+    return res.status(429).json({
+      error: "Too many incorrect codes. Try again in a few minutes.",
+    });
+  }
+
+  const code = normalizeCode((req.body as { code?: unknown })?.code);
+  if (!code) {
+    codeFailureLimiter.record(ip);
+    return res.status(401).json({ error: "A valid round code is required" });
+  }
+
+  const [round] = await db
+    .select()
+    .from(rounds)
+    .where(eq(rounds.joinCode, code));
+  // A code that matches nothing and a code on a finalized round are the same
+  // answer on purpose — neither confirms that a code exists.
+  if (!round || round.status === "finalized") {
+    codeFailureLimiter.record(ip);
+    return res.status(404).json({ error: "No open round with that code" });
+  }
+  if (round.codeExpiresAt && round.codeExpiresAt.getTime() <= Date.now()) {
+    return res.status(403).json({ error: "This round's code has expired" });
+  }
+
+  codeFailureLimiter.reset(ip);
+  res.json(await loadRound(db, round.id));
+});
+
 // Get one round with its entries, enriched with player names and tag numbers
 // (incoming + assigned) so clients can display it without extra lookups.
+// Public — this is also how a live round's clients poll for each other's
+// scores, so it must never leak the join code (see roundPublicColumns).
 roundsRouter.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
-  const [round] = await db.select().from(rounds).where(eq(rounds.id, id));
-  if (!round) return res.status(404).json({ error: "Round not found" });
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: "Invalid round id" });
+  }
+  const full = await loadRound(db, id);
+  if (!full) return res.status(404).json({ error: "Round not found" });
+  res.json(full);
+});
 
-  const incoming = alias(tags, "incoming_tag");
-  const assigned = alias(tags, "assigned_tag");
-  const entries = await db
-    .select({
-      id: roundEntries.id,
-      playerId: roundEntries.playerId,
-      playerName: players.name,
-      score: roundEntries.score,
-      acePool: roundEntries.acePool,
-      ctp: roundEntries.ctp,
-      incomingNumber: incoming.number,
-      assignedNumber: assigned.number,
-    })
-    .from(roundEntries)
-    .innerJoin(players, eq(players.id, roundEntries.playerId))
-    .leftJoin(incoming, eq(incoming.id, roundEntries.incomingTagId))
-    .leftJoin(assigned, eq(assigned.id, roundEntries.assignedTagId))
-    .where(eq(roundEntries.roundId, id));
-  res.json({ ...round, entries });
+// ---- Live-round write routes, mounted at /rounds (behind requireRoundCode) ----
+//
+// Anyone holding the round's code can check players in and edit scores —
+// including someone else's, because one person keeps the card for a whole
+// group. The code scopes writes to this round's entries and nothing else;
+// creating and finalizing rounds stay behind Cloudflare Access.
+
+// Check a player in. Only while status is "open": the redistributed tag pool
+// IS the set of participants' incoming tags, so admitting someone after
+// scoring starts silently changes what every other player can win.
+roundsRouter.post("/:id/checkin", requireRoundCode, async (req, res, next) => {
+  const round = (req as RoundCodeRequest).round!;
+  if (round.status !== "open") {
+    return res
+      .status(409)
+      .json({ error: "Check-in is closed for this round" });
+  }
+
+  const playerId = Number((req.body as { playerId?: unknown })?.playerId);
+  const tagNumber = Number((req.body as { tagNumber?: unknown })?.tagNumber);
+  if (!Number.isInteger(playerId)) {
+    return res.status(400).json({ error: "playerId is required" });
+  }
+  if (!Number.isInteger(tagNumber) || tagNumber < 1 || tagNumber > 300) {
+    return res.status(400).json({ error: "tagNumber must be an integer 1–300" });
+  }
+  const acePool = Boolean((req.body as { acePool?: unknown })?.acePool);
+  const ctp = Boolean((req.body as { ctp?: unknown })?.ctp);
+
+  try {
+    const [tag] = await db
+      .select({ id: tags.id })
+      .from(tags)
+      .where(eq(tags.number, tagNumber));
+    if (!tag) {
+      return res.status(400).json({ error: `Tag #${tagNumber} does not exist` });
+    }
+    const [player] = await db
+      .select({ id: players.id })
+      .from(players)
+      .where(eq(players.id, playerId));
+    if (!player) {
+      return res.status(400).json({ error: "That player is not on the roster" });
+    }
+
+    const [created] = await db
+      .insert(roundEntries)
+      .values({ roundId: round.id, playerId, incomingTagId: tag.id, acePool, ctp })
+      .returning({ id: roundEntries.id });
+    const [entry] = await selectEntries(db, eq(roundEntries.id, created.id));
+    res.status(201).json(entry);
+  } catch (err) {
+    // Two people checking in at once can both pass the checks above and race
+    // to the insert; the DB constraints are what actually decide. Translate
+    // each into the message that tells the loser what to do.
+    const which = uniqueViolationConstraint(err);
+    if (which?.includes("incoming_tag")) {
+      return res.status(409).json({
+        error: `Tag #${tagNumber} is already checked in on this round`,
+      });
+    }
+    if (which?.includes("player_id")) {
+      return res
+        .status(409)
+        .json({ error: "That player is already checked in" });
+    }
+    next(err); // never throw from an async handler — see /complete below
+  }
+});
+
+// Edit an entry: score, and the pools. Allowed while "open" or "scoring" —
+// entering scores is the whole point of the scoring phase.
+roundsRouter.patch(
+  "/:id/entries/:entryId",
+  requireRoundCode,
+  async (req, res, next) => {
+    const round = (req as RoundCodeRequest).round!;
+    const entryId = Number(req.params.entryId);
+    if (!Number.isInteger(entryId)) {
+      return res.status(400).json({ error: "Invalid entry id" });
+    }
+
+    const body = req.body as {
+      score?: unknown;
+      acePool?: unknown;
+      ctp?: unknown;
+      tagNumber?: unknown;
+    };
+    const patch: Partial<typeof roundEntries.$inferInsert> = {};
+
+    if (body?.score !== undefined) {
+      if (body.score === null || body.score === "") {
+        patch.score = null; // DNF / not finished
+      } else {
+        const score = Number(body.score);
+        // Integer, not just finite: the column is an int, so a fractional
+        // value would fail in the database instead of at the door.
+        if (!Number.isInteger(score)) {
+          return res
+            .status(400)
+            .json({ error: "score must be a whole number or null" });
+        }
+        patch.score = score;
+      }
+    }
+    if (body?.acePool !== undefined) patch.acePool = Boolean(body.acePool);
+    if (body?.ctp !== undefined) patch.ctp = Boolean(body.ctp);
+
+    // Correcting a mistyped incoming tag is a pool change, so it follows the
+    // same rule as check-in: only while the round is still open.
+    if (body?.tagNumber !== undefined) {
+      if (round.status !== "open") {
+        return res
+          .status(409)
+          .json({ error: "Incoming tags are locked once check-in closes" });
+      }
+      const tagNumber = Number(body.tagNumber);
+      if (!Number.isInteger(tagNumber) || tagNumber < 1 || tagNumber > 300) {
+        return res
+          .status(400)
+          .json({ error: "tagNumber must be an integer 1–300" });
+      }
+      const [tag] = await db
+        .select({ id: tags.id })
+        .from(tags)
+        .where(eq(tags.number, tagNumber));
+      if (!tag) {
+        return res.status(400).json({ error: `Tag #${tagNumber} does not exist` });
+      }
+      patch.incomingTagId = tag.id;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: "Nothing to update" });
+    }
+    patch.updatedAt = new Date();
+
+    try {
+      const [updated] = await db
+        .update(roundEntries)
+        .set(patch)
+        .where(
+          and(eq(roundEntries.id, entryId), eq(roundEntries.roundId, round.id))
+        )
+        .returning({ id: roundEntries.id });
+      if (!updated) return res.status(404).json({ error: "Entry not found" });
+      const [entry] = await selectEntries(db, eq(roundEntries.id, updated.id));
+      res.json(entry);
+    } catch (err) {
+      if (uniqueViolationConstraint(err)?.includes("incoming_tag")) {
+        return res
+          .status(409)
+          .json({ error: "Another player is already checked in with that tag" });
+      }
+      next(err);
+    }
+  }
+);
+
+// Remove an entry — a mis-check-in, or someone who bailed before teeing off.
+// Only while "open", for the same pool reason as check-in.
+roundsRouter.delete("/:id/entries/:entryId", requireRoundCode, async (req, res) => {
+  const round = (req as RoundCodeRequest).round!;
+  const entryId = Number(req.params.entryId);
+  if (!Number.isInteger(entryId)) {
+    return res.status(400).json({ error: "Invalid entry id" });
+  }
+  if (round.status !== "open") {
+    return res
+      .status(409)
+      .json({ error: "Players can't be removed once check-in closes" });
+  }
+  const [deleted] = await db
+    .delete(roundEntries)
+    .where(and(eq(roundEntries.id, entryId), eq(roundEntries.roundId, round.id)))
+    .returning({ id: roundEntries.id });
+  if (!deleted) return res.status(404).json({ error: "Entry not found" });
+  res.status(204).end();
 });
 
 // ---- Admin write routes, mounted at /admin/rounds (behind requireAdmin) ----
@@ -75,12 +317,12 @@ function assignTags<T extends { tagNumber: number; score: number | null }>(
   return ranked.map((entry, i) => ({ entry, assignedNumber: pool[i] }));
 }
 
-// Load a round with entries enriched for display (names + tag numbers).
-async function loadRound(tx: typeof db, roundId: number) {
-  const [round] = await tx.select().from(rounds).where(eq(rounds.id, roundId));
+// One entry enriched for display. Shared by loadRound and the single-entry
+// responses of the live-round write routes.
+function selectEntries(tx: typeof db, where: ReturnType<typeof eq>) {
   const incoming = alias(tags, "incoming_tag");
   const assigned = alias(tags, "assigned_tag");
-  const entries = await tx
+  return tx
     .select({
       id: roundEntries.id,
       playerId: roundEntries.playerId,
@@ -90,12 +332,25 @@ async function loadRound(tx: typeof db, roundId: number) {
       ctp: roundEntries.ctp,
       incomingNumber: incoming.number,
       assignedNumber: assigned.number,
+      updatedAt: roundEntries.updatedAt,
     })
     .from(roundEntries)
     .innerJoin(players, eq(players.id, roundEntries.playerId))
     .leftJoin(incoming, eq(incoming.id, roundEntries.incomingTagId))
     .leftJoin(assigned, eq(assigned.id, roundEntries.assignedTagId))
-    .where(eq(roundEntries.roundId, roundId));
+    .where(where);
+}
+
+// Load a round with entries enriched for display (names + tag numbers).
+// Returns null when the round doesn't exist. Public-safe: selects named
+// columns, never the join code.
+async function loadRound(tx: typeof db, roundId: number) {
+  const [round] = await tx
+    .select(roundPublicColumns)
+    .from(rounds)
+    .where(eq(rounds.id, roundId));
+  if (!round) return null;
+  const entries = await selectEntries(tx, eq(roundEntries.roundId, roundId));
   return { ...round, entries };
 }
 
@@ -232,7 +487,7 @@ roundsAdminRouter.post("/complete", async (req, res, next) => {
       return { roundId: round.id, replayed: false };
     });
 
-    const full = await loadRound(db, roundId);
+    const full = (await loadRound(db, roundId))!; // just committed — it exists
     res.status(replayed ? 200 : 201).json({ ...full, replayed });
   } catch (err) {
     if (err instanceof HttpError) {
@@ -245,7 +500,7 @@ roundsAdminRouter.post("/complete", async (req, res, next) => {
         .from(rounds)
         .where(eq(rounds.clientKey, clientKey));
       if (existing) {
-        const full = await loadRound(db, existing.id);
+        const full = (await loadRound(db, existing.id))!;
         return res.json({ ...full, replayed: true });
       }
     }
@@ -260,16 +515,126 @@ function isUniqueViolation(err: unknown): boolean {
   return (err as { code?: string })?.code === "23505";
 }
 
-// Create a round.
-roundsAdminRouter.post("/", async (req, res) => {
+// Name of the constraint a unique violation tripped, or null if the error
+// isn't one. `round_entries` has two unique constraints and the caller needs
+// to know which fired to say anything useful about it.
+function uniqueViolationConstraint(err: unknown): string | null {
+  if (!isUniqueViolation(err)) return null;
+  return (err as { constraint_name?: string })?.constraint_name ?? "";
+}
+
+// How long a freshly minted join code stays valid. A round is an afternoon;
+// 12 hours covers a late start and a long back nine without leaving a working
+// code lying around for days.
+const DEFAULT_CODE_HOURS = 12;
+
+// Mint a join code that isn't already taken. The column is globally unique, so
+// a collision is possible (and astronomically unlikely); retry rather than
+// surface a 500 for it.
+async function mintCode(expiresInHours: number) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateCode();
+    const [clash] = await db
+      .select({ id: rounds.id })
+      .from(rounds)
+      .where(eq(rounds.joinCode, code));
+    if (!clash) {
+      return {
+        joinCode: code,
+        codeExpiresAt: new Date(Date.now() + expiresInHours * 3600 * 1000),
+      };
+    }
+  }
+  throw new HttpError(500, "Could not allocate a round code");
+}
+
+function codeHours(input: unknown): number {
+  const n = Number(input);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_CODE_HOURS;
+  return Math.min(n, 24 * 7); // cap: a code shouldn't outlive the season
+}
+
+// Create a round. Opens it for check-in with a join code by default — that's
+// the live-round flow. Pass withCode: false for a round an admin will fill in
+// themselves.
+roundsAdminRouter.post("/", async (req, res, next) => {
   const date = String(req.body?.date ?? "").trim();
   if (!date) return res.status(400).json({ error: "date is required" });
   const course = req.body?.course ? String(req.body.course).trim() : null;
-  const [created] = await db
-    .insert(rounds)
-    .values({ date, course })
-    .returning();
-  res.status(201).json(created);
+  const withCode = req.body?.withCode !== false;
+
+  try {
+    const code = withCode
+      ? await mintCode(codeHours(req.body?.expiresInHours))
+      : { joinCode: null, codeExpiresAt: null };
+    const [created] = await db
+      .insert(rounds)
+      .values({
+        date,
+        course,
+        createdBy: (req as typeof req & { adminEmail?: string }).adminEmail ?? null,
+        ...code,
+      })
+      .returning();
+    res.status(201).json(created);
+  } catch (err) {
+    if (err instanceof HttpError)
+      return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+// Read back the current code. An admin who reloads the app mid-round needs the
+// code again to read it out — it isn't in any public response.
+roundsAdminRouter.get("/:id/code", async (req, res) => {
+  const id = Number(req.params.id);
+  const [round] = await db
+    .select({
+      joinCode: rounds.joinCode,
+      codeExpiresAt: rounds.codeExpiresAt,
+      status: rounds.status,
+    })
+    .from(rounds)
+    .where(eq(rounds.id, id));
+  if (!round) return res.status(404).json({ error: "Round not found" });
+  res.json(round);
+});
+
+// Rotate or revoke the join code. Rotating cuts off anyone who has the old one
+// (a code read out to the wrong group, say); revoking closes the round to
+// player writes entirely without finalizing it.
+roundsAdminRouter.post("/:id/code", async (req, res, next) => {
+  const id = Number(req.params.id);
+  const action = String(req.body?.action ?? "rotate");
+  if (action !== "rotate" && action !== "revoke") {
+    return res.status(400).json({ error: "action must be rotate or revoke" });
+  }
+
+  try {
+    const [round] = await db.select().from(rounds).where(eq(rounds.id, id));
+    if (!round) return res.status(404).json({ error: "Round not found" });
+    if (round.status === "finalized") {
+      return res.status(409).json({ error: "Round is finalized" });
+    }
+    const next_ =
+      action === "revoke"
+        ? { joinCode: null, codeExpiresAt: null }
+        : await mintCode(codeHours(req.body?.expiresInHours));
+    const [updated] = await db
+      .update(rounds)
+      .set(next_)
+      .where(eq(rounds.id, id))
+      .returning({
+        joinCode: rounds.joinCode,
+        codeExpiresAt: rounds.codeExpiresAt,
+        status: rounds.status,
+      });
+    res.json(updated);
+  } catch (err) {
+    if (err instanceof HttpError)
+      return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
 });
 
 // Update a round (date, course, status).
@@ -382,10 +747,19 @@ roundsAdminRouter.post("/:id/finalize", async (req, res, next) => {
 
   try {
     const result = await db.transaction(async (tx) => {
+      // FOR UPDATE is what makes this idempotent under concurrency, not the
+      // transaction. Three finalize requests land together (an admin
+      // double-tapping on a flaky course connection); with a plain SELECT all
+      // three read status='open' from their own READ COMMITTED snapshots, all
+      // pass the guard, and all redistribute — the tag pool gets shuffled
+      // three times and standings are silently wrong. The row lock makes the
+      // others block here until the first commits; READ COMMITTED then
+      // re-reads the fresh row, they see 'finalized', and they 409.
       const [round] = await tx
         .select()
         .from(rounds)
-        .where(eq(rounds.id, roundId));
+        .where(eq(rounds.id, roundId))
+        .for("update");
       if (!round) throw new HttpError(404, "Round not found");
       if (round.status === "finalized")
         throw new HttpError(409, "Round is already finalized");
@@ -440,11 +814,19 @@ roundsAdminRouter.post("/:id/finalize", async (req, res, next) => {
           });
       }
 
+      // Clearing the code is what actually ends player write access: the gate
+      // refuses a round with no code, and the number returns to the pool for
+      // a future round. Status alone would do it too — belt and braces.
       const [finalized] = await tx
         .update(rounds)
-        .set({ status: "finalized" })
+        .set({ status: "finalized", joinCode: null, codeExpiresAt: null })
         .where(eq(rounds.id, roundId))
-        .returning();
+        .returning({
+          id: rounds.id,
+          date: rounds.date,
+          course: rounds.course,
+          status: rounds.status,
+        });
 
       const finalEntries = await tx
         .select()

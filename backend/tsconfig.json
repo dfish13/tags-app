@@ -14,5 +14,7 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  // Tests are excluded from the BUILD so they never ship in the container
+  // image. `npm run typecheck` uses tsconfig.test.json, which includes them.
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/test"]
 }

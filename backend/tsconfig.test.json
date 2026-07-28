@@ -1,0 +1,7 @@
+{
+  // Type-checks everything including tests and their helpers, which the build
+  // config deliberately leaves out. Never emits — see `npm run typecheck`.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
