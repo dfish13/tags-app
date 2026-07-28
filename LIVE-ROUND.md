@@ -3,8 +3,8 @@
 Join-code check-in and scoring, so players at the course can enter their own
 scores without an admin. Delete this file when Phase 4 lands.
 
-**Phase 1 (backend) is shipped and deployed. Phase 2 (live mode in the UI) is
-built and verified locally, not yet deployed.** Phases 3–4 remain.
+**Phases 1 (backend) and 2 (live mode in the UI) are shipped and deployed.**
+Phases 3–4 remain.
 
 ---
 
@@ -33,10 +33,25 @@ npm run test:db:down  # destroy it
 `resetDb()` truncates every table in whatever `DATABASE_URL` points at. Never
 aim the suite at dev or production.
 
-Deploy is `git pull && docker compose up -d --build api` on
-`dfish@raspberrypi.local`. The container entrypoint is
-`migrate.js && seed.js && index.js`, so **deploying applies migrations
-automatically**. Previous image is tagged `tags-app-api:rollback-f34bfb2`.
+Production is `dfish@raspberrypi.local`, checked out at **`~/tags-app`** (not
+`~/docker/tags-app`; confirm with `docker compose ls`). The two halves deploy
+differently:
+
+- **Backend** — `docker compose up -d --build api`. The container entrypoint is
+  `migrate.js && seed.js && index.js`, so **deploying applies migrations
+  automatically**. Previous image stays tagged, e.g.
+  `tags-app-api:rollback-f34bfb2`.
+- **Frontend** — `index.html` is served straight off the checkout by
+  `python3 -m http.server 8080 --bind 127.0.0.1`, so **`git pull` alone ships
+  it** — no rebuild, no restart. (nginx runs on the Pi but serves an unrelated
+  site; it isn't in this path.)
+
+So check `git diff --stat <deployed> origin/main` first and skip the rebuild
+when nothing under `backend/` changed — that's what made Phase 2 a pull.
+
+No cache-bust step is needed either: [sw.js](sw.js) serves navigations
+network-first, so a new `index.html` is live immediately and the cache is only
+an offline fallback. Don't bump `CACHE` reflexively on a frontend deploy.
 
 ---
 
@@ -109,7 +124,16 @@ name if one is off.
 
 ---
 
-## Phase 2 — live mode in the UI (built)
+## Phase 2 — live mode in the UI (done)
+
+Commit `035fd0f`, merged to `main` as PR #1 (`17ddc60`) and deployed to the Pi
+on 2026-07-28. Frontend-only, so nothing was rebuilt and no migration ran.
+
+Verified in production: the served `index.html` matches `main` byte-for-byte,
+the page loads with no console errors, and the auth split still holds
+(`/api/rounds/live` → `200`, `/api/admin/*` → `302`). **The join/check-in flow
+itself is unexercised in prod** — minting a code needs an admin behind
+Cloudflare Access. Smoke-test a throwaway round before relying on it.
 
 Everything below was the plan; all of it landed. What the code actually does,
 for whoever picks up Phase 3:
