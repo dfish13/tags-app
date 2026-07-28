@@ -323,6 +323,29 @@
   .stats-table th:first-child, .stats-table td:first-child { text-align: left; }
   .stats-table td { font-weight: 700; }
   .stats-table td.held { color: var(--muted); font-weight: 400; }
+
+  /* ── Live rounds: join card, status bar, per-row save state ── */
+  .live-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 14px;
+    background: color-mix(in srgb, var(--blue) 18%, #fff);
+    border: 1.5px solid var(--blue); border-radius: 10px;
+  }
+  .live-bar .lb-main { flex: 1; min-width: 0; }
+  .live-bar .lb-title { font-weight: 700; font-size: 14px; }
+  .live-bar .lb-meta { font-size: 12px; color: var(--muted); }
+  .live-bar .lb-meta.warn { color: var(--danger); font-weight: 700; }
+  .live-bar .linkbtn { flex-shrink: 0; }
+  /* Codes are read aloud in a parking lot and typed one glyph at a time —
+     oversized and letter-spaced so a mistype is visible before submitting. */
+  .code-in {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 24px; letter-spacing: 5px; text-align: center; text-transform: uppercase;
+  }
+  .save-state { font-size: 11px; font-weight: 800; white-space: nowrap; min-width: 52px; text-align: right; }
+  .save-state.pending { color: var(--muted); }
+  .save-state.saved { color: var(--green); }
+  .save-state.failed { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -345,8 +368,17 @@
 </div>
 
 <main>
+  <!-- Live-round status strip: only inside the round view, only in live mode -->
+  <div id="liveBar" class="live-bar" style="display:none"></div>
+
   <!-- LEAGUE HOME -->
   <section id="view-home" style="display:none">
+    <!-- Live round: shown only when one is open (or we're already in one) -->
+    <div class="card" id="liveCard" style="display:none">
+      <h2 id="liveCardTitle">Live round</h2>
+      <div id="liveCardBody"></div>
+    </div>
+
     <div class="card">
       <h2>Current tag standings</h2>
       <p class="hint">Who holds each tag right now, updated after every finalized round. Tap your name to pin your tag to the top.</p>
@@ -372,8 +404,8 @@
         onchange="setCourse(this.value)">
     </div>
 
-    <div class="card">
-      <h2>Add player</h2>
+    <div class="card" id="addPlayerCard">
+      <h2 id="addPlayerTitle">Add player</h2>
       <label for="pName">Name</label>
       <div class="typeahead">
         <input type="text" id="pName" autocomplete="off" placeholder="Start typing a roster name…"
@@ -389,12 +421,20 @@
         <label><input type="checkbox" id="pAce"> Ace pool ($1)</label>
         <label><input type="checkbox" id="pCtp"> CTP ($1)</label>
       </div>
-      <button class="btn" onclick="addPlayer()">Add player</button>
+      <button class="btn" id="pAddBtn" onclick="addPlayer()">Add player</button>
+      <div id="checkinMsg" class="hint" style="display:none"></div>
+    </div>
+
+    <!-- Live round past check-in: the add form above is hidden, this explains why -->
+    <div class="card" id="checkinClosedCard" style="display:none">
+      <h2>Check-in is closed</h2>
+      <p class="hint">This round has moved on to scoring, so the player list and
+        incoming tags are locked. An admin can reopen check-in if someone was missed.</p>
     </div>
 
     <div class="card">
       <h2 style="display:flex;align-items:center;justify-content:space-between">
-        <span>Players (<span id="count">0</span>)</span>
+        <span><span id="playersTitle">Players</span> (<span id="count">0</span>)</span>
         <button id="removeModeBtn" class="linkbtn" onclick="toggleRemoveMode()">Remove…</button>
       </h2>
       <div id="playerList"></div>
@@ -412,14 +452,15 @@
       </div>
     </div>
 
-    <button class="btn danger" onclick="resetRound()">Reset round</button>
+    <button class="btn danger" id="resetRoundBtn" onclick="resetRound()">Reset round</button>
+    <button class="btn secondary" id="leaveLiveBtn" style="display:none" onclick="leaveLiveRound()">Leave this live round</button>
   </section>
 
   <!-- SCORES -->
   <section id="view-scores" style="display:none">
     <div class="card">
       <h2>Enter scores</h2>
-      <p class="hint">Enter each player's total score after the round. Leave blank if not finished.</p>
+      <p class="hint" id="scoresHint">Enter each player's total score after the round. Leave blank if not finished.</p>
       <div id="scoreList"></div>
     </div>
     <button class="btn" onclick="goStep('results')">View results →</button>
@@ -433,6 +474,7 @@
       <p class="hint" id="resultsDate"></p>
       <div id="resultsList"></div>
       <button class="btn" id="finalizeBtn" onclick="finalizeRound()">Finalize &amp; save round</button>
+      <div id="finalizeHint" class="hint" style="display:none"></div>
       <div id="finalizeMsg" class="hint" style="display:none"></div>
     </div>
 
@@ -534,19 +576,39 @@
 const KEY = 'tags-round-v1';
 let state = load();
 
+// A fresh LOCAL round. Live mode reuses this shape and fills in mode/roundId/
+// code, so every renderer below works on one vocabulary regardless of mode.
+function blankState() {
+  return {
+    players: [], course: '', playDate: '', clientKey: '', finalized: null,
+    mode: 'local', roundId: null, code: '', roundStatus: ''
+  };
+}
+
+// Patch in every key a stored round might predate. A new field has to be added
+// HERE as well as to blankState(): a returning user's stored object is used
+// as-is, so a field that only exists in the literal stays undefined for them.
+function normalizeState(s) {
+  if (typeof s.course !== 'string') s.course = '';
+  if (typeof s.playDate !== 'string') s.playDate = '';
+  if (typeof s.clientKey !== 'string') s.clientKey = '';
+  if (!('finalized' in s)) s.finalized = null; // server result once finalized
+  if (s.mode !== 'live') s.mode = 'local';
+  if (typeof s.roundId !== 'number') s.roundId = null;
+  if (typeof s.code !== 'string') s.code = '';
+  if (typeof s.roundStatus !== 'string') s.roundStatus = '';
+  return s;
+}
+
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
-    if (s && Array.isArray(s.players)) {
-      if (typeof s.course !== 'string') s.course = '';
-      if (typeof s.playDate !== 'string') s.playDate = '';
-      if (typeof s.clientKey !== 'string') s.clientKey = '';
-      if (!('finalized' in s)) s.finalized = null; // server result once finalized
-      return s;
-    }
+    if (s && Array.isArray(s.players)) return normalizeState(s);
   } catch (e) {}
-  return { players: [], course: '', playDate: '', clientKey: '', finalized: null };
+  return blankState();
 }
+
+function isLive() { return state.mode === 'live' && state.roundId !== null; }
 function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
 
 function setCourse(v) { state.course = String(v || '').trim(); save(); }
@@ -609,6 +671,8 @@ function router() {
 
   if (route === 'home') {
     showSection('home');
+    renderLiveCard();  // paint from what we know, then refresh
+    loadLiveRounds();
     loadStandings();
     loadHistory();
   } else if (route === 'stats') {
@@ -638,9 +702,12 @@ function goStep(s) {
     document.getElementById('rDate').value = state.playDate || localToday();
   }
   if (s === 'results') {
-    document.getElementById('resultsDate').textContent =
-      'Play date: ' + fmtDate(state.playDate || localToday()) + ' — change it in Setup.';
+    document.getElementById('resultsDate').textContent = isLive()
+      ? 'Play date: ' + fmtDate(state.playDate || localToday())
+      : 'Play date: ' + fmtDate(state.playDate || localToday()) + ' — change it in Setup.';
+    if (isLive()) ensureAdminChecked(); // decides whether Finalize is offered
   }
+  if (isLive()) pollLiveRound(); // switching steps is a good moment to catch up
   render();
 }
 
@@ -666,14 +733,15 @@ function addPlayer() {
   if (!(tag >= 1 && tag <= 300)) { alert('Tag must be a number from 1 to 300.'); return; }
   if (state.players.some(p => p.tag === tag)) { alert('Tag #' + tag + ' is already taken.'); return; }
 
+  // Live round: the server owns the player list, so this is a check-in request
+  // rather than a local push. Same validations run first either way — they
+  // catch the common mistakes without a round trip.
+  if (isLive()) { checkInPlayer(match, tag, ace, ctp); return; }
+
   state.players.push({ id: nextId(), rosterId: match.id, name: match.name, tag, ace, ctp, score: null });
   save();
 
-  clearNameField();
-  document.getElementById('pTag').value = '';
-  document.getElementById('pAce').checked = false;
-  document.getElementById('pCtp').checked = false;
-  document.getElementById('pName').focus();
+  clearAddPlayerForm();
   render();
 }
 
@@ -802,6 +870,7 @@ function confirmRemove() {
   const n = selectedToRemove.size;
   if (n === 0) { toggleRemoveMode(); return; }
   if (!confirm('Remove ' + n + ' player' + (n>1?'s':'') + '?')) return;
+  if (isLive()) { removeLiveEntries(Array.from(selectedToRemove)); return; }
   state.players = state.players.filter(p => !selectedToRemove.has(p.id));
   save();
   removeMode = false;
@@ -815,13 +884,15 @@ function setScore(id, val) {
   const n = val.trim() === '' ? null : parseInt(val, 10);
   p.score = (n !== null && !isNaN(n)) ? n : null;
   save();
+  if (isLive()) saveLiveScore(id);
 }
 
 function resetRound() {
+  if (isLive()) { leaveLiveRound(); return; } // live rounds are left, not cleared
   if (!confirm('Clear all players and start a new round?')) return;
   // A fresh round must get a fresh clientKey, or finalizing it would replay
   // the previous round instead of saving this one.
-  state = { players: [], course: '', playDate: '', clientKey: '', finalized: null };
+  state = blankState();
   save();
   document.getElementById('rCourse').value = '';
   goStep('setup');
@@ -857,6 +928,11 @@ function computeResults() {
 }
 
 function render() {
+  // Before the early return in the finalized branch below, so the live chrome
+  // is right even once the round is done.
+  renderLiveBar();
+  renderLiveUi();
+
   const t = poolTotals();
   document.getElementById('aceTotal').textContent = '$' + t.ace;
   document.getElementById('ctpTotal').textContent = '$' + t.ctp;
@@ -891,7 +967,10 @@ function render() {
   // remove-mode UI
   const removeBar = document.getElementById('removeBar');
   const removeBtn = document.getElementById('removeModeBtn');
-  if (state.players.length === 0 && !removeMode) {
+  // Live: removing an entry changes the tag pool, so the server allows it only
+  // while check-in is open. Don't offer a button that can only 409.
+  const canRemove = !isLive() || state.roundStatus === 'open';
+  if ((state.players.length === 0 && !removeMode) || !canRemove) {
     removeBtn.style.display = 'none';
   } else {
     removeBtn.style.display = '';
@@ -901,20 +980,27 @@ function render() {
   document.getElementById('confirmRemoveBtn').textContent =
     'Remove selected (' + selectedToRemove.size + ')';
 
-  // scores list
+  // scores list. A live round re-renders this on every poll, so anything the
+  // user is part-way through typing is captured and put back afterwards.
   const sl = document.getElementById('scoreList');
+  const scoreFocus = captureScoreFocus();
   if (state.players.length === 0) {
-    sl.innerHTML = '<div class="empty">Add players in Setup first.</div>';
+    sl.innerHTML = '<div class="empty">' +
+      (isLive() ? 'Nobody is checked in yet.' : 'Add players in Setup first.') + '</div>';
   } else {
     sl.innerHTML = state.players.map(p => `
       <div class="row">
         <div class="num">${p.tag}</div>
         <div class="name">${esc(p.name)}</div>
+        ${isLive() ? `<span class="save-state" data-entry="${p.id}"></span>` : ''}
         <input class="score-in" type="number" inputmode="numeric" placeholder="score"
+          id="score-${p.id}"
           value="${p.score===null?'':p.score}"
           onchange="setScore(${p.id}, this.value)">
       </div>`).join('');
+    if (isLive()) renderSaveStates();
   }
+  restoreScoreFocus(scoreFocus);
 
   // results
   document.getElementById('aceTotal2').textContent = '$' + t.ace;
@@ -953,10 +1039,11 @@ function render() {
   hint.textContent = 'Lowest score gets the lowest incoming tag. Ties: better incoming tag wins. This is a preview until you finalize.';
   const { rows, dnfCount } = computeResults();
   if (rows.length === 0) {
-    rl.innerHTML = '<div class="empty">No players yet. Add players in step 1.</div>';
+    rl.innerHTML = '<div class="empty">' +
+      (isLive() ? 'Nobody is checked in yet.' : 'No players yet. Add players in step 1.') + '</div>';
     finalizeBtn.style.display = 'none';
   } else {
-    finalizeBtn.style.display = '';
+    finalizeBtn.style.display = canFinalize() ? '' : 'none';
     rl.innerHTML = rows.map((r) => `
       <div class="row result-row">
         <div class="tag-out">#${r.assigned}</div>
@@ -983,6 +1070,7 @@ const API_BASE = SITE_ORIGIN + '/api';
 // route the user through a full-page navigation to log in, rather than
 // letting an admin fetch fail confusingly.
 let adminEmail = null;
+let adminChecked = false; // whether we've asked Access yet this session
 
 // Ask Cloudflare who we are. /cdn-cgi/access/get-identity returns 200 + JSON
 // (with the email) when an Access session cookie is present, else 401/403.
@@ -1002,6 +1090,7 @@ async function fetchAdminIdentity() {
 // Refresh the Admin tab's auth UI: show the sign-in card or the add form.
 async function refreshAdminAuth() {
   adminEmail = await fetchAdminIdentity();
+  adminChecked = true;
   const authCard = document.getElementById('authCard');
   const addCard = document.getElementById('addCard');
   const importCard = document.getElementById('importCard');
@@ -1041,6 +1130,10 @@ function adminSignOut() {
 // request that actually committed, the server replays that round instead of
 // redistributing tags a second time.
 async function finalizeRound() {
+  // A live round already exists server-side — it finalizes in place rather
+  // than being pushed through the one-shot /complete route.
+  if (isLive()) return finalizeLiveRound();
+
   const btn = document.getElementById('finalizeBtn');
   if (state.players.length === 0) { showFinalizeMsg('Add players first.', true); return; }
   if (!confirm('Finalize this round? Tag assignments will be saved to the server and locked.')) return;
@@ -1140,6 +1233,600 @@ function showFinalizeMsg(text, isError) {
   msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
 }
 
+// ─── Live rounds ──────────────────────────────────────────
+// A live round lives on the server: everyone at the course holds the same
+// 6-character join code and writes their own check-in and score through
+// /api/rounds/*, no admin present. Local mode is untouched — joining stashes
+// the in-progress local round under LOCAL_BACKUP_KEY and leaving restores it
+// verbatim, so live mode is an extra path rather than a replacement.
+const LOCAL_BACKUP_KEY = 'tags-round-local-v1';
+const LIVE_POLL_MS = 15000;
+
+// Mirrors the server's alphabet (no 0 O 1 I L — codes get read aloud in a
+// parking lot). Normalizing here means an obvious typo is rejected without
+// spending one of the IP's ten wrong-code attempts.
+const CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const CODE_LENGTH = 6;
+
+function normalizeCode(input) {
+  const cleaned = String(input || '').toUpperCase().replace(/[\s-]/g, '');
+  if (cleaned.length !== CODE_LENGTH) return null;
+  for (const ch of cleaned) if (!CODE_ALPHABET.includes(ch)) return null;
+  return cleaned;
+}
+
+class LiveError extends Error {
+  constructor(status, message, retryAfterSec) {
+    super(message);
+    this.status = status;
+    this.retryAfterSec = retryAfterSec;
+  }
+}
+
+// Player-side sibling of postAdmin/patchAdmin. Those send Access cookies; this
+// sends the round code in a header (never a query string, so codes stay out of
+// logs and Referer) and surfaces the API's `error` string, which is written to
+// be shown to the player as-is.
+async function liveFetch(path, opts) {
+  const o = opts || {};
+  const headers = { 'X-Round-Code': state.code };
+  if (o.body !== undefined) headers['Content-Type'] = 'application/json';
+  const res = await fetch(API_BASE + path, {
+    method: o.method || 'GET',
+    headers,
+    body: o.body === undefined ? undefined : JSON.stringify(o.body)
+  });
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new LiveError(res.status, data.error || ('HTTP ' + res.status),
+      Number(res.headers.get('Retry-After')) || 0);
+  }
+  return data;
+}
+
+// The API's entry shape → the local player shape computeResults() and every
+// renderer already speak. Mapping at the boundary keeps ONE ranking
+// implementation rather than teaching it two vocabularies. The server entry id
+// doubles as the local id, so it's what the PATCH/DELETE routes are given.
+function entryToPlayer(e) {
+  return {
+    id: e.id,
+    rosterId: e.playerId,
+    name: e.playerName,
+    tag: e.incomingNumber,
+    ace: !!e.acePool,
+    ctp: !!e.ctp,
+    score: (e.score === undefined || e.score === null) ? null : e.score
+  };
+}
+
+// The entries endpoint has no ORDER BY, so two polls can return the same
+// players in a different order — rows would jump under a thumb mid-round.
+// Incoming tag is the stable, meaningful order, and it matches the number
+// shown at the head of each row.
+function sortLivePlayers(list) {
+  return list.slice().sort((a, b) => a.tag - b.tag);
+}
+
+// Per-entry write state, driving the row indicator. 'pending'/'failed' also
+// mean "unflushed local edit" — a poll must not overwrite those.
+let liveSave = new Map();     // entryId → { status, msg }
+let liveInFlight = new Map(); // entryId → seq of the newest write for it
+let liveWriteSeq = 0;
+let lastLiveWriteAt = 0;      // discards polls that started before a write
+let liveNotice = '';          // banner text for an error the player must act on
+
+function setSaveState(entryId, status, msg) {
+  if (status === null) liveSave.delete(entryId);
+  else liveSave.set(entryId, { status, msg: msg || '' });
+  renderSaveStates();
+}
+
+function hasUnflushedEdits(entryId) {
+  const s = liveSave.get(entryId);
+  return !!s && (s.status === 'pending' || s.status === 'failed');
+}
+
+const SAVE_LABEL = { pending: 'saving…', saved: 'saved', failed: 'not saved' };
+
+// Update just the indicators, so a save never rebuilds the inputs underneath
+// someone's thumb.
+function renderSaveStates() {
+  for (const el of document.querySelectorAll('#scoreList .save-state')) {
+    const s = liveSave.get(Number(el.dataset.entry));
+    el.className = 'save-state ' + (s ? s.status : '');
+    el.textContent = s ? SAVE_LABEL[s.status] : '';
+    el.title = s && s.msg ? s.msg : '';
+  }
+}
+
+// What to put in front of the player for a failed live request. The server's
+// message is written for exactly this, so prefer it; add the wait for a 429.
+function liveErrorText(e) {
+  if (!(e instanceof LiveError)) return 'Offline — not saved. It’ll retry when you reconnect.';
+  if (e.status === 429 && e.retryAfterSec) {
+    return e.message + ' (about ' + Math.ceil(e.retryAfterSec / 60) + ' min)';
+  }
+  return e.message;
+}
+
+// Side effects a failed live request has on the session, separate from the
+// message shown at the call site.
+function handleLiveError(e) {
+  if (!(e instanceof LiveError)) return;
+  if (e.status === 401 || e.status === 403) {
+    // The code is wrong, was rotated, or expired. Stop and re-prompt — never
+    // retry, or the per-IP failure budget locks the whole group out.
+    liveNotice = e.message + ' Ask for the current code.';
+    renderLiveBar();
+  } else if (e.status === 404) {
+    leaveLiveRound(true, 'That round is no longer on the server.');
+  } else if (e.status === 409) {
+    pollLiveRound(); // the round moved on — re-read rather than guess
+  }
+}
+
+// ── Entering and leaving live mode ──
+
+function enterLiveMode(round, code) {
+  if (!isLive() && (state.players.length > 0 || state.course || state.playDate)) {
+    localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(state));
+  }
+  liveSave = new Map();
+  liveInFlight = new Map();
+  liveNotice = '';
+  state = {
+    ...blankState(),
+    mode: 'live',
+    roundId: round.id,
+    code,
+    roundStatus: round.status,
+    course: round.course || '',
+    playDate: round.date || '',
+    players: sortLivePlayers((round.entries || []).map(entryToPlayer))
+  };
+  save();
+  startLivePolling();
+  location.hash = '#/round';
+  goStep(round.status === 'open' ? 'setup' : 'scores');
+}
+
+// Leave the server round and put the stashed local round back exactly as it
+// was. Nothing is deleted server-side — the round and its entries stay put.
+function leaveLiveRound(silent, notice) {
+  if (!silent && !confirm('Leave this live round? Scores already saved stay on the server — you can rejoin with the same code.')) return;
+  stopLivePolling();
+  liveSave = new Map();
+  liveInFlight = new Map();
+  liveNotice = '';
+  let restored = null;
+  try {
+    const raw = localStorage.getItem(LOCAL_BACKUP_KEY);
+    const s = raw ? JSON.parse(raw) : null;
+    if (s && Array.isArray(s.players)) restored = normalizeState(s);
+  } catch (e) { /* unreadable backup — start clean rather than fail to leave */ }
+  localStorage.removeItem(LOCAL_BACKUP_KEY);
+  state = restored || blankState();
+  state.mode = 'local'; state.roundId = null; state.code = ''; state.roundStatus = '';
+  save();
+  if (notice) joinNotice = notice;
+  location.hash = '#/';
+  router();
+}
+
+// ── Home: the live-round card ──
+
+let liveRounds = [];
+// Why the player is looking at the join card ("that code no longer works").
+// Sticky rather than consumed on display: leaving a round renders the card
+// once directly and again from the hashchange, and a one-shot message would
+// be wiped by the second render before anyone read it. Cleared when they act.
+let joinNotice = null;
+
+async function loadLiveRounds() {
+  try {
+    const res = await fetch(API_BASE + '/rounds/live');
+    if (!res.ok) return;
+    liveRounds = await res.json();
+  } catch (e) { /* offline — card falls back to whatever we last knew */ }
+  renderLiveCard();
+}
+
+function renderLiveCard() {
+  const card = document.getElementById('liveCard');
+  const title = document.getElementById('liveCardTitle');
+  const body = document.getElementById('liveCardBody');
+
+  if (isLive()) {
+    title.textContent = 'You’re in a live round';
+    body.innerHTML = `
+      <p class="hint">${esc(liveRoundLabel())} · ${liveStatusText()}</p>
+      <button class="btn" onclick="location.hash='#/round'">Open the round</button>
+      <button class="linkbtn" onclick="leaveLiveRound()">Leave this round</button>`;
+    card.style.display = '';
+    return;
+  }
+  // Keep the card up with just the code box when we have something to say —
+  // e.g. the round we were in vanished, or a rotated code needs re-entering.
+  if (!liveRounds.length && !joinNotice) { card.style.display = 'none'; return; }
+
+  title.textContent = liveRounds.length > 1 ? 'Live rounds' : 'Live round';
+  const list = liveRounds.map(r => `
+    <div class="row">
+      <div style="flex:1">
+        <div class="name">${esc(r.course || 'Round')}</div>
+        <div class="meta">${esc(fmtDate(r.date))} · ${r.playerCount} checked in · ${r.status === 'open' ? 'check-in open' : 'scoring'}</div>
+      </div>
+    </div>`).join('');
+  body.innerHTML = list + `
+    <label for="joinCode">Join code</label>
+    <input type="text" id="joinCode" class="code-in" autocomplete="off"
+      autocapitalize="characters" spellcheck="false" maxlength="8"
+      placeholder="ABC234" aria-label="Round join code"
+      onkeydown="onJoinCodeKey(event)">
+    <p class="hint">Whoever opened the round has the code. Everyone in the group can use the same one.</p>
+    <button class="btn" id="joinBtn" onclick="joinLiveRound()">Join round</button>
+    <div id="joinMsg" class="hint" style="display:none"></div>`;
+  card.style.display = '';
+  if (joinNotice) showJoinMsg(joinNotice, true);
+}
+
+function onJoinCodeKey(e) {
+  if (e.key === 'Enter') { e.preventDefault(); joinLiveRound(); }
+}
+
+function showJoinMsg(text, isError) {
+  const msg = document.getElementById('joinMsg');
+  if (!msg) return;
+  msg.textContent = text;
+  msg.style.display = '';
+  msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
+}
+
+async function joinLiveRound() {
+  const input = document.getElementById('joinCode');
+  const btn = document.getElementById('joinBtn');
+  const code = normalizeCode(input ? input.value : '');
+  joinNotice = null; // they're acting on it now
+  if (!code) { showJoinMsg('A code is 6 letters and numbers, like ABC234.', true); return; }
+
+  btn.disabled = true;
+  showJoinMsg('Joining…', false);
+  try {
+    // The code goes in the body here, not a header: this is the discovery step
+    // and we don't know the round id yet.
+    const res = await fetch(API_BASE + '/rounds/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const retry = Number(res.headers.get('Retry-After')) || 0;
+      throw new LiveError(res.status, data.error || ('HTTP ' + res.status), retry);
+    }
+    enterLiveMode(data, code);
+  } catch (e) {
+    showJoinMsg(e instanceof LiveError ? liveErrorText(e)
+      : 'Couldn’t reach the server — check your signal and try again.', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── The live status bar above the round view ──
+
+function liveRoundLabel() {
+  const where = state.course || 'Live round';
+  return state.playDate ? where + ' · ' + fmtDate(state.playDate) : where;
+}
+
+function liveStatusText() {
+  if (state.roundStatus === 'finalized') return 'finalized';
+  if (state.roundStatus === 'scoring') return 'check-in closed · scoring';
+  return 'check-in open';
+}
+
+function renderLiveBar() {
+  const bar = document.getElementById('liveBar');
+  if (!isLive() || route !== 'round') { bar.style.display = 'none'; return; }
+  const n = state.players.length;
+  bar.innerHTML = `
+    <div class="lb-main">
+      <div class="lb-title">🟢 ${esc(liveRoundLabel())}</div>
+      <div class="lb-meta ${liveNotice ? 'warn' : ''}">${esc(liveNotice ||
+        (liveStatusText() + ' · ' + n + ' player' + (n === 1 ? '' : 's')))}</div>
+    </div>
+    ${liveNotice
+      ? '<button class="linkbtn" onclick="rejoinPrompt()">New code</button>'
+      : '<button class="linkbtn" onclick="leaveLiveRound()">Leave</button>'}`;
+  bar.style.display = '';
+}
+
+// Send the player back to the join card to type a fresh code. Deliberately not
+// an automatic retry: a rejected code retried in a loop burns the IP's failure
+// budget and locks the whole group out of the round.
+function rejoinPrompt() {
+  leaveLiveRound(true, 'Enter the current code for this round.');
+  const input = document.getElementById('joinCode');
+  if (input) input.focus();
+}
+
+// ── Writes: check-in, removal, scores ──
+
+async function checkInPlayer(match, tag, ace, ctp) {
+  const btn = document.getElementById('pAddBtn');
+  btn.disabled = true;
+  showCheckinMsg('Checking in ' + match.name + '…', false);
+  try {
+    const entry = await liveFetch('/rounds/' + state.roundId + '/checkin', {
+      method: 'POST',
+      body: { playerId: match.id, tagNumber: tag, acePool: ace, ctp }
+    });
+    lastLiveWriteAt = Date.now();
+    state.players = sortLivePlayers(state.players.concat(entryToPlayer(entry)));
+    save();
+    clearAddPlayerForm();
+    showCheckinMsg(match.name + ' checked in with tag #' + tag + '.', false);
+    render();
+  } catch (e) {
+    showCheckinMsg(liveErrorText(e), true);
+    handleLiveError(e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function removeLiveEntries(ids) {
+  const failures = [];
+  for (const id of ids) {
+    try {
+      await liveFetch('/rounds/' + state.roundId + '/entries/' + id, { method: 'DELETE' });
+      lastLiveWriteAt = Date.now();
+      state.players = state.players.filter(p => p.id !== id);
+      liveSave.delete(id);
+    } catch (e) {
+      failures.push(liveErrorText(e));
+      handleLiveError(e);
+    }
+  }
+  save();
+  removeMode = false;
+  selectedToRemove.clear();
+  if (failures.length) showCheckinMsg(failures[0], true);
+  render();
+}
+
+// PATCH one entry's score. Fired from setScore(), which runs on change (i.e.
+// on blur), so there's nothing to debounce — but two edits to the same row can
+// still overlap, and only the newest may write the indicator.
+async function saveLiveScore(entryId) {
+  const p = state.players.find(x => x.id === entryId);
+  if (!p) return;
+  const seq = ++liveWriteSeq;
+  liveInFlight.set(entryId, seq);
+  setSaveState(entryId, 'pending');
+  try {
+    const entry = await liveFetch('/rounds/' + state.roundId + '/entries/' + entryId, {
+      method: 'PATCH',
+      body: { score: p.score }
+    });
+    lastLiveWriteAt = Date.now();
+    if (liveInFlight.get(entryId) !== seq) return; // superseded by a newer edit
+    const i = state.players.findIndex(x => x.id === entryId);
+    if (i >= 0) state.players[i] = entryToPlayer(entry);
+    save();
+    setSaveState(entryId, 'saved');
+  } catch (e) {
+    if (liveInFlight.get(entryId) !== seq) return;
+    setSaveState(entryId, 'failed', liveErrorText(e));
+    handleLiveError(e);
+  }
+}
+
+function showCheckinMsg(text, isError) {
+  const msg = document.getElementById('checkinMsg');
+  msg.textContent = text;
+  msg.style.display = '';
+  msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
+}
+
+function clearAddPlayerForm() {
+  clearNameField();
+  document.getElementById('pTag').value = '';
+  document.getElementById('pAce').checked = false;
+  document.getElementById('pCtp').checked = false;
+  document.getElementById('pName').focus();
+}
+
+// ── Polling ──
+
+let livePollTimer = null;
+
+function startLivePolling() {
+  stopLivePolling();
+  livePollTimer = setInterval(pollLiveRound, LIVE_POLL_MS);
+}
+
+function stopLivePolling() {
+  if (livePollTimer) clearInterval(livePollTimer);
+  livePollTimer = null;
+}
+
+async function pollLiveRound() {
+  if (!isLive() || state.roundStatus === 'finalized') return;
+  // The service worker serves /api/* GETs network-first with a cached fallback,
+  // so an offline poll comes back as a perfectly normal-looking 200 of stale
+  // data. Treating that as server truth would overwrite live local edits with
+  // the state of the round ten minutes ago — so don't poll at all when the
+  // device says it's offline.
+  if (!navigator.onLine) return;
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(API_BASE + '/rounds/' + state.roundId);
+    if (res.status === 404) {
+      leaveLiveRound(true, 'That round is no longer on the server.');
+      return;
+    }
+    if (!res.ok) return;
+    const round = await res.json();
+    // A write that landed while this poll was in flight isn't reflected in it.
+    if (lastLiveWriteAt > startedAt) return;
+    mergeLiveRound(round);
+  } catch (e) { /* transient — the next tick tries again */ }
+}
+
+// Server wins, except for entries with unflushed local edits or the row being
+// typed into right now: those keep their local value until their PATCH lands.
+function mergeLiveRound(round) {
+  if (!isLive()) return;
+  if (round.status === 'finalized') { applyFinalizedRound(round); render(); return; }
+
+  state.roundStatus = round.status;
+  state.course = round.course || '';
+  state.playDate = round.date || '';
+
+  const mine = new Map(state.players.map(p => [p.id, p]));
+  const typing = focusedEntryId();
+  state.players = sortLivePlayers((round.entries || []).map(e => {
+    const local = mine.get(e.id);
+    if (local && (hasUnflushedEdits(e.id) || e.id === typing)) return local;
+    return entryToPlayer(e);
+  }));
+  // Indicators for entries that no longer exist (removed by someone else).
+  for (const id of Array.from(liveSave.keys())) {
+    if (!state.players.some(p => p.id === id)) liveSave.delete(id);
+  }
+  save();
+  render();
+}
+
+function applyFinalizedRound(round) {
+  stopLivePolling();
+  state.roundStatus = 'finalized';
+  state.players = sortLivePlayers((round.entries || []).map(entryToPlayer));
+  state.course = round.course || state.course;
+  state.finalized = {
+    roundId: round.id,
+    course: round.course || '',
+    rows: (round.entries || []).map(e => ({
+      name: e.playerName,
+      assignedNumber: e.assignedNumber,
+      incomingNumber: e.incomingNumber,
+      score: e.score,
+      dnf: e.score === null || e.score === undefined
+    })).sort((a, b) => a.assignedNumber - b.assignedNumber)
+  };
+  save();
+}
+
+// Finalize a live round. Admin-only (it redistributes tags and clears the
+// code), and a different route from the local flow's one-shot /complete —
+// the round and its entries are already on the server.
+async function finalizeLiveRound() {
+  const btn = document.getElementById('finalizeBtn');
+  if (state.players.length === 0) { showFinalizeMsg('Nobody is checked in yet.', true); return; }
+  if (!confirm('Finalize this round? Tags are redistributed and the join code stops working.')) return;
+
+  const who = await fetchAdminIdentity();
+  if (!who) { showFinalizeMsg('Admin sign-in required — redirecting…', true); setTimeout(adminSignIn, 800); return; }
+
+  btn.disabled = true;
+  showFinalizeMsg('Finalizing… don’t close this page.', false);
+  try {
+    await postAdmin('/admin/rounds/' + state.roundId + '/finalize', {});
+    // That response carries raw entry rows (no names, no tag numbers), so read
+    // the round back for the enriched entries the results view renders.
+    const res = await fetch(API_BASE + '/rounds/' + state.roundId);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    applyFinalizedRound(await res.json());
+    showFinalizeMsg('Round finalized and saved.', false);
+    render();
+  } catch (e) {
+    if (String(e.message).includes('Failed to fetch')) {
+      showFinalizeMsg('Sign-in required — redirecting…', true);
+      setTimeout(adminSignIn, 800);
+    } else {
+      showFinalizeMsg('Finalize failed: ' + e.message, true);
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Ask Cloudflare once whether this device is an admin, so the Results step can
+// decide whether to offer Finalize. Cheap and silent — a player just gets a 401.
+async function ensureAdminChecked() {
+  if (adminChecked) return;
+  adminChecked = true;
+  adminEmail = await fetchAdminIdentity();
+  render();
+}
+
+// ── Mode-dependent chrome ──
+// Everything that reads differently in a live round. Kept in one place so the
+// local flow's markup and renderers stay exactly as they were.
+function renderLiveUi() {
+  const live = isLive();
+  const open = live && state.roundStatus === 'open';
+  const show = (id, on) => { document.getElementById(id).style.display = on ? '' : 'none'; };
+
+  show('addPlayerCard', !live || open);
+  show('checkinClosedCard', live && !open && state.roundStatus !== 'finalized');
+  show('resetRoundBtn', !live);
+  show('leaveLiveBtn', live);
+  show('exportCard', !live); // a live round is already on the server
+  document.getElementById('addPlayerTitle').textContent = live ? 'Check in a player' : 'Add player';
+  document.getElementById('pAddBtn').textContent = live ? 'Check in' : 'Add player';
+  document.getElementById('playersTitle').textContent = live ? 'Checked in' : 'Players';
+  document.getElementById('scoresHint').textContent = live
+    ? 'Scores save to the round as you enter them — anyone in the group can fill in any row.'
+    : 'Enter each player\'s total score after the round. Leave blank if not finished.';
+
+  // Round details come from the server in live mode.
+  document.getElementById('rCourse').disabled = live;
+  document.getElementById('rDate').disabled = live;
+
+  // Finalize is an admin action; a player is told who they're waiting on
+  // instead. The button's own visibility belongs to render() — it owns that
+  // element in both the preview and finalized branches — so this only decides
+  // the hint. See canFinalize().
+  const hint = document.getElementById('finalizeHint');
+  const explain = live && !state.finalized && !canFinalize() && state.players.length > 0;
+  hint.textContent = explain ? 'An admin finalizes this round and redistributes the tags.' : '';
+  hint.style.display = explain ? '' : 'none';
+}
+
+// Whether this device may finalize the round in front of it. Local rounds are
+// finalized by whoever runs them (the request itself is admin-gated); a live
+// round's Finalize button would only 401 for a player, so don't offer it.
+function canFinalize() { return !isLive() || !!adminEmail; }
+
+// The score row being typed into right now, or null. A poll merge must leave
+// that row alone — the value isn't in state until the field fires `change`.
+function focusedEntryId() {
+  const el = document.activeElement;
+  if (!el || !el.id || el.id.indexOf('score-') !== 0) return null;
+  const n = Number(el.id.slice(6));
+  return Number.isInteger(n) ? n : null;
+}
+
+function captureScoreFocus() {
+  const el = document.activeElement;
+  if (!el || !el.classList || !el.classList.contains('score-in')) return null;
+  return { id: el.id, value: el.value, start: el.selectionStart, end: el.selectionEnd };
+}
+
+function restoreScoreFocus(f) {
+  if (!f) return;
+  const el = document.getElementById(f.id);
+  if (!el) return;
+  el.value = f.value; // a background poll must never retype someone's field
+  el.focus();
+  try { el.setSelectionRange(f.start, f.end); } catch (e) { /* number inputs */ }
+}
+
 // ─── Export / import an unsanctioned round ────────────────
 // A non-admin runs a round locally, exports it as a text blob, and sends it to
 // an admin who imports it, reviews in the Play tab, and finalizes. The blob is
@@ -1195,6 +1882,9 @@ function importRound() {
   const show = (t, err) => { msg.textContent = t; msg.style.display=''; msg.style.color = err?'var(--danger)':'var(--green)'; };
   const raw = document.getElementById('importIn').value.trim();
   if (!raw) { show('Paste an exported round first.', true); return; }
+  // Importing replaces the round in progress, which in live mode would strand
+  // the server round and its stashed local backup. Leave first, deliberately.
+  if (isLive()) { show('Leave the live round first (Run round → Setup), then import.', true); return; }
 
   let payload;
   try {
@@ -1221,6 +1911,7 @@ function importRound() {
 
   // Load into local round state; admin reviews/finalizes in the Play tab.
   state = {
+    ...blankState(),
     players: payload.players.map((p, i) => ({
       id: i + 1, rosterId: p.rosterId, name: p.name, tag: p.tag,
       ace: !!p.ace, ctp: !!p.ctp, score: (p.score == null ? null : p.score)
@@ -2140,8 +2831,26 @@ function darken(hex, amount) {
 // Hash-based routing: react to nav clicks (which set location.hash) and to the
 // post-login redirect (#/admin). Default to League Home.
 window.addEventListener('hashchange', router);
+
+// Live rounds: catch up the moment the app becomes usable again, rather than
+// waiting out the rest of a 15s tick. Both handlers no-op outside live mode.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) pollLiveRound();
+});
+window.addEventListener('online', () => {
+  pollLiveRound();
+  renderLiveBar();
+});
+
 loadConfig();
 router();
+
+// A reload mid-round lands back in the live round it was in — the code and
+// round id are in localStorage, so resume polling.
+if (isLive() && state.roundStatus !== 'finalized') {
+  startLivePolling();
+  pollLiveRound();
+}
 
 // Offline support: sw.js caches the shell and last-known API reads, serving
 // them only when the network fails (see sw.js for the strategy map).

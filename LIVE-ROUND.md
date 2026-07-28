@@ -3,7 +3,8 @@
 Join-code check-in and scoring, so players at the course can enter their own
 scores without an admin. Delete this file when Phase 4 lands.
 
-**Phase 1 (backend) is shipped and deployed.** Phases 2–4 are frontend.
+**Phase 1 (backend) is shipped and deployed. Phase 2 (live mode in the UI) is
+built and verified locally, not yet deployed.** Phases 3–4 remain.
 
 ---
 
@@ -85,25 +86,60 @@ else can win, so closing check-in has to be possible without finalizing.
 
 ## Frontend as it stands
 
-Everything is one file: [index.html](index.html), 2153 lines, no build step,
-no framework. Phase 2 touches these:
+Everything is one file: [index.html](index.html), 2862 lines, no build step,
+no framework. Line numbers below are post-Phase-2 and will drift — grep the
+name if one is off.
 
 | What | Where | Note |
 |---|---|---|
-| `state` + `load()`/`save()` | [index.html:535](index.html:535) | `KEY = 'tags-round-v1'` |
-| Routing (`route`/`step`) | [index.html:591](index.html:591) | `#/`, `#/round`, `#/admin`, `#/stats` |
-| `addPlayer()` | [index.html:647](index.html:647) | Setup's add form |
-| Typeahead + tag autofill | [index.html:692](index.html:692)–[752](index.html:752) | `pickSuggestion()` prefills the tag from `r.tagNumber` |
-| `setScore()` | [index.html:812](index.html:812) | Where the live PATCH hooks in |
-| `computeResults()` | [index.html:847](index.html:847) | Reads the `state.players` global |
-| `render()` | [index.html:859](index.html:859) | One big re-render |
-| `adminEmail` / `refreshAdminAuth()` | [index.html:985](index.html:985)–[1018](index.html:1018) | Gates admin-only UI |
-| `postAdmin()` / `patchAdmin()` | [index.html:1106](index.html:1106) | Access-cookie writes |
-| `exportRound()` / `importRound()` | [index.html:1150](index.html:1150), [1193](index.html:1193) | Must keep working untouched |
+| `state`, `blankState()`, `normalizeState()` | [index.html:576](index.html:576) | `KEY = 'tags-round-v1'`; `isLive()` lives here |
+| Routing (`route`/`step`) | [index.html:653](index.html:653) | `#/`, `#/round`, `#/admin`, `#/stats` |
+| `addPlayer()` | [index.html:714](index.html:714) | Branches to `checkInPlayer()` when live |
+| Typeahead + tag autofill | [index.html:759](index.html:759)–[819](index.html:819) | `pickSuggestion()` prefills the tag from `r.tagNumber` |
+| `setScore()` | [index.html:881](index.html:881) | Calls `saveLiveScore()` when live |
+| `computeResults()` | [index.html:918](index.html:918) | Reads the `state.players` global, both modes |
+| `render()` | [index.html:930](index.html:930) | One big re-render; owns the finalize button |
+| `adminEmail` / `refreshAdminAuth()` | [index.html:1072](index.html:1072) | Gates admin-only UI |
+| `postAdmin()` / `patchAdmin()` | [index.html:1199](index.html:1199) | Access-cookie writes |
+| **Live-round module** | [index.html:1242](index.html:1242)–[1830](index.html:1830) | Everything Phase 2 added, in one block |
+| `liveFetch()` | [index.html:1270](index.html:1270) | The `X-Round-Code` sibling of `postAdmin` — Phase 3's outbox wraps this |
+| `pollLiveRound()` / `mergeLiveRound()` | [index.html:1657](index.html:1657), [1682](index.html:1682) | Poll guard + merge rules |
+| `renderLiveUi()` | [index.html:1770](index.html:1770) | Every piece of mode-dependent chrome |
+| `exportRound()` / `importRound()` | [index.html:1837](index.html:1837), [1880](index.html:1880) | Unchanged, still verified working |
 
 ---
 
-## Phase 2 — live mode in the UI
+## Phase 2 — live mode in the UI (built)
+
+Everything below was the plan; all of it landed. What the code actually does,
+for whoever picks up Phase 3:
+
+- `blankState()` + `normalizeState()` replaced the two round-shape literals, so
+  a new field is added in one place instead of three.
+- Joining stashes the local round under `tags-round-local-v1` and leaving
+  restores it verbatim — that's what keeps live mode additive.
+- Server entries are mapped to the local player shape at the boundary
+  (`entryToPlayer`), with the **server entry id as the local id** — that's what
+  the PATCH/DELETE routes are given.
+- Writes go through `liveFetch` (`X-Round-Code` header, surfaces the server's
+  `error` string). Failures are shown, never retried — see the Phase 3 note on
+  the failure budget.
+- Poll merge keeps local values for entries that are pending/failed **or
+  focused**, since a score isn't in state until the field fires `change`.
+- Entries are sorted by incoming tag on every merge: `selectEntries` has no
+  `ORDER BY`, so unsorted rows visibly reshuffle between polls.
+
+Two things worth knowing that only showed up on the way:
+
+- **Two renders follow leaving a round** (the direct one and the `hashchange`
+  one), so a one-shot "that code stopped working" message is wiped before it's
+  read. `joinNotice` is sticky and cleared when the player acts on it.
+- **`render()` owns the finalize button** in both its branches, so anything
+  setting that button's visibility earlier in the same pass gets overwritten.
+  `canFinalize()` is consulted inside `render()` for that reason.
+
+### Original plan
+
 
 `state` gains `mode: 'local'|'live'`, `roundId`, `code`. **The local flow and
 export/import are untouched** — live mode is an additional path, not a
@@ -151,6 +187,11 @@ Either check `navigator.onLine` before merging, or have the SW skip
 
 `tags-outbox-v1` in `localStorage`: pending ops coalesced per entry+field
 (latest value wins), flushed with backoff on reconnect.
+
+Phase 2 left the seams for this: every live write goes through `liveFetch`
+(one wrap point), and each row already carries a `pending`/`saved`/`failed`
+state in `liveSave` that the merge treats as "don't overwrite". Today a failed
+write just says so and stops — the outbox is what makes it survive a reload.
 
 **The service worker stays out of it entirely.** It already refuses to
 intercept non-GET ([sw.js:32](sw.js:32)), which is exactly right — a write must
