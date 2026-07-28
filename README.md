@@ -14,6 +14,7 @@ past rounds.
 - **Admin** — manage the roster (add/edit/remove players and their tags). Admin-gated.
 - **Finalize** — computes tag assignments, snapshots them, and updates standings.
 - **Export/import** — run a round with no admin present, then hand it to an admin to review and finalize.
+- **Live rounds** — an admin opens a round with a join code; players at the course check themselves in and enter their own scores from their own phones.
 
 ## Architecture
 
@@ -28,7 +29,17 @@ Express + TypeScript API (Docker)  ──►  PostgreSQL (Docker)
 
 - **Frontend**: one self-contained `index.html`. Hash-routed views (`#/`, `#/round`, `#/admin`). No framework, no build.
 - **Backend**: Express + TypeScript, [Drizzle ORM](https://orm.drizzle.team/) over PostgreSQL. Runs in Docker via `docker-compose`.
-- **Reads are public**; **writes require admin auth** via Cloudflare Access (an email allowlist at the edge), re-checked against an `admins` table in the API.
+Access comes in **three tiers**, not two:
+
+| Tier | Routes | Who |
+|---|---|---|
+| Public read | `GET /api/*` except `/api/admin/*` | anyone |
+| Round code | `/api/rounds/:id/*` writes | anyone holding the round's join code |
+| Admin | `/api/admin/*` | Cloudflare Access email allowlist, re-checked against the `admins` table |
+
+The middle tier is what lets players score a live round with no admin present.
+It is a **write** tier without an identity, so it is deliberately narrow: it
+reaches only the entries of one round, and only while that round is open.
 
 ### Data model (6 tables)
 
@@ -40,6 +51,40 @@ Express + TypeScript API (Docker)  ──►  PostgreSQL (Docker)
 | `rounds` | Each sanctioned round |
 | `round_entries` | One row per player per round (incoming tag, score, assigned tag) |
 | `admins` | Email allowlist for write access |
+
+## Live rounds
+
+Normally one person runs a round on one phone. A live round instead puts the
+round on the server and lets everyone write to it, so a group can spread out
+and still be entering scores into the same round.
+
+**Running one** (Admin tab, signed in):
+
+1. **Open a live round** — pick the date and course. The app mints a
+   six-character join code and shows it large, because it gets read aloud on a
+   first tee. The alphabet omits `0 O 1 I L`, which are the glyphs people
+   mishear.
+2. **Read the code out.** Players go to Home, tap **Join**, and type it. They
+   check themselves in — picking their name from the roster autofills the tag
+   they currently hold — and enter their own scores as they play.
+3. **Close check-in** once everyone is in. Scores keep saving; nobody new can
+   join. This is a separate step from finalizing because a late check-in
+   changes the tag pool, and therefore what everyone else can win.
+4. **Finalize** from the Results step, as usual. Tags are redistributed and the
+   code stops working.
+
+**New code** reissues the code and kills the old one — for when it has been
+read to the wrong group. **Revoke** closes the round to player writes without
+finalizing it. Both are on the same Admin card.
+
+The code is never in any API response a non-admin can read, and never in a URL
+— it travels in an `X-Round-Code` header, so it stays out of server logs and
+`Referer`. An admin who reloads mid-round reads it back from
+`GET /api/admin/rounds/:id/code`.
+
+Scores are written straight through; if a write fails the row says so rather
+than silently retrying. Leaving a live round is non-destructive — the round and
+its entries stay on the server, and the same code rejoins it.
 
 ## Running locally
 
@@ -127,6 +172,13 @@ The reference instance runs on a Raspberry Pi behind a Cloudflare Tunnel:
 - `tags.duncanfish.co/api/*` → the API container (localhost:3001)
 - `tags.duncanfish.co/*` → the static `index.html`
 - Cloudflare Access protects `/api/admin/*` with an email allowlist.
+
+**The Access policy must stay scoped to `/api/admin/*`.** The rest of
+`/api/rounds/*` is reachable without an Access identity *on purpose* — that is
+what lets a player at the course check in and enter a score without being on
+the admin allowlist. Those routes are gated by the round's join code instead
+(see [Live rounds](#live-rounds)). Widening the Access policy to `/api/*` looks
+like a tightening but breaks player check-in entirely.
 
 The API and database containers bind to `127.0.0.1` only — they're reachable
 solely through the tunnel, which is what makes the admin auth model safe.
