@@ -1,10 +1,14 @@
 # Live rounds — working notes
 
 Join-code check-in and scoring, so players at the course can enter their own
-scores without an admin. Delete this file when Phase 4 lands.
+scores without an admin. Delete this file when Phase 3 lands.
 
-**Phases 1 (backend) and 2 (live mode in the UI) are shipped and deployed.**
-Phases 3–4 remain.
+**Phases 1 (backend), 2 (live mode in the UI) and 4 (admin UI + docs) are
+shipped and deployed. Only Phase 3 (the outbox) remains** — it was skipped
+rather than dropped, and Phase 4 did not depend on it.
+
+The user-facing docs now live in the [README](README.md#live-rounds); what's
+left here is the working detail Phase 3 needs.
 
 ---
 
@@ -231,16 +235,34 @@ replaying won't fix it.
 
 ---
 
-## Phase 4 — admin UI + docs
+## Phase 4 — admin UI + docs (done)
 
-- "Open a live round" card: date + course → **big readable code**, plus Close
-  check-in and Finalize. The code alphabet already omits `0 O 1 I L` because
-  codes get read aloud in a parking lot; the display should be sized to match
-  that reality.
-- README section on live rounds — it still documents 6 tables and says nothing
-  about the third auth tier.
-- A note in the deployment docs that `/api/rounds/*` is **intentionally**
-  reachable without Access.
+Deployed 2026-07-28. Frontend + docs only — **no new backend routes were
+needed**, which was the surprise. The routes Phase 4 drives already existed:
+`PATCH /admin/rounds/:id` takes `status`, so "close check-in" is
+`{status:'scoring'}`, and `DELETE /admin/rounds/:id` already cascades entries.
+Neither is in the Phase 2 API table above; that table only ever covered what
+Phase 2 itself called, so **read the routes, not the table**.
+
+What landed:
+
+- **Admin card** (`#liveAdminCard`, Admin tab) — open a round, then the code at
+  40px, with New code / Revoke / Close check-in / Open this round, and Discard
+  offered only while nobody is checked in.
+- **Close check-in also sits in the live bar** for signed-in admins, because
+  that is where the admin actually is when they use it. `closeCheckin(roundId)`
+  takes the id for that reason and reports failures in whichever view is open.
+- **Discovery reads `GET /rounds`, not `/rounds/live`** — `/live` filters on
+  `join_code is not null`, so a revoked round vanishes from it, and an admin who
+  revoked by mistake could never reach the round again to issue a new code.
+- The open form is **static markup**, only the code panel is re-rendered — a
+  half-typed course name would otherwise be wiped on re-render.
+- README gained a Live rounds section, the three-tier auth table, and the note
+  that `/api/rounds/*` is intentionally reachable without Access.
+
+Not done: no automated coverage. The frontend has no test infrastructure (one
+file, no build), and the change is frontend-only, so the backend suite was not
+re-run — nothing under `backend/` was touched.
 
 ---
 

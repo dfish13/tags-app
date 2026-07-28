@@ -331,6 +331,9 @@
     background: color-mix(in srgb, var(--blue) 18%, #fff);
     border: 1.5px solid var(--blue); border-radius: 10px;
   }
+  /* Wraps because an admin sees an extra control here (Close check-in) and a
+     narrow phone would otherwise squeeze the title to nothing. */
+  .live-bar { flex-wrap: wrap; }
   .live-bar .lb-main { flex: 1; min-width: 0; }
   .live-bar .lb-title { font-weight: 700; font-size: 14px; }
   .live-bar .lb-meta { font-size: 12px; color: var(--muted); }
@@ -342,6 +345,16 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 24px; letter-spacing: 5px; text-align: center; text-transform: uppercase;
   }
+  /* The admin's copy of the code. Bigger than .code-in because this one is read
+     ALOUD to a group standing around a first tee, often at arm's length in
+     sunlight. user-select:all so one tap grabs it for a group chat.
+     padding-left offsets the trailing letter-space so it optically centres. */
+  .code-out {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 40px; font-weight: 800; letter-spacing: 8px; line-height: 1.2;
+    text-align: center; padding: 10px 0 10px 8px; user-select: all;
+  }
+  .code-out.none { font-size: 15px; font-weight: 600; letter-spacing: 0; color: var(--muted); }
   .save-state { font-size: 11px; font-weight: 800; white-space: nowrap; min-width: 52px; text-align: right; }
   .save-state.pending { color: var(--muted); }
   .save-state.saved { color: var(--green); }
@@ -507,6 +520,23 @@
       <h2>Admin sign-in</h2>
       <p class="hint">Editing the roster requires admin access. Sign in to continue — everyone can still view the roster below without signing in.</p>
       <button class="btn" id="signInBtn" onclick="adminSignIn()">Sign in as admin</button>
+    </div>
+
+    <!-- Live round: open one, read out the code, run it. Shown when signed IN.
+         The form is static markup (not rendered) so a half-typed course name
+         survives a re-render; only the code panel below is rebuilt. -->
+    <div class="card" id="liveAdminCard" style="display:none">
+      <h2>Live round</h2>
+      <div id="liveOpenForm">
+        <p class="hint">Opens a round players join with a code, so everyone enters their own scores without an admin.</p>
+        <label for="lrDate">Date</label>
+        <input type="date" id="lrDate">
+        <label for="lrCourse">Course</label>
+        <input type="text" id="lrCourse" autocomplete="off" placeholder="e.g. Valmont">
+        <button class="btn" id="lrOpenBtn" onclick="openLiveRound()">Open round</button>
+      </div>
+      <div id="liveOpenRound" style="display:none"></div>
+      <div id="lrMsg" class="hint" style="display:none"></div>
     </div>
 
     <!-- Add form: shown when signed IN -->
@@ -1094,15 +1124,19 @@ async function refreshAdminAuth() {
   const authCard = document.getElementById('authCard');
   const addCard = document.getElementById('addCard');
   const importCard = document.getElementById('importCard');
+  const liveCard = document.getElementById('liveAdminCard');
   if (adminEmail) {
     document.getElementById('adminWho').textContent = adminEmail;
     authCard.style.display = 'none';
     addCard.style.display = '';
     importCard.style.display = '';
+    liveCard.style.display = '';
+    loadLiveAdmin();
   } else {
     authCard.style.display = '';
     addCard.style.display = 'none';
     importCard.style.display = 'none';
+    liveCard.style.display = 'none';
   }
 }
 
@@ -1540,7 +1574,10 @@ function renderLiveBar() {
     </div>
     ${liveNotice
       ? '<button class="linkbtn" onclick="rejoinPrompt()">New code</button>'
-      : '<button class="linkbtn" onclick="leaveLiveRound()">Leave</button>'}`;
+      : '<button class="linkbtn" onclick="leaveLiveRound()">Leave</button>'}
+    ${!liveNotice && adminEmail && state.roundStatus === 'open'
+      ? '<button class="linkbtn" onclick="closeCheckin(state.roundId)">Close check-in</button>'
+      : ''}`;
   bar.style.display = '';
 }
 
@@ -1551,6 +1588,203 @@ function rejoinPrompt() {
   leaveLiveRound(true, 'Enter the current code for this round.');
   const input = document.getElementById('joinCode');
   if (input) input.focus();
+}
+
+// ── Admin: opening and running a live round ──
+// The other end of the same round players join. Every write here goes through
+// postAdmin/patchAdmin (Access cookies), never liveFetch — an admin acts as an
+// admin, not as a code holder. The code is known only because the server just
+// handed it back; it is still absent from every public response.
+
+let adminRound = null;  // the unfinalized round being managed, or null
+let adminCode = null;   // {joinCode, codeExpiresAt} — joinCode null once revoked
+
+// Deliberately GET /rounds (all rounds) rather than /rounds/live (only rounds
+// WITH a code): a revoked round drops off /live but still exists, and an admin
+// who revoked by mistake has to be able to reach it to issue a new one.
+async function loadLiveAdmin() {
+  try {
+    const res = await fetch(API_BASE + '/rounds');
+    if (!res.ok) return;
+    const all = await res.json();
+    adminRound = all.find(r => r.status !== 'finalized') || null;  // newest first
+    adminCode = adminRound ? await readLiveCode(adminRound.id) : null;
+  } catch (e) { /* offline — leave the panel showing whatever we last knew */ }
+  renderLiveAdmin();
+}
+
+// The code isn't in any public response, so an admin who reloads mid-round has
+// to read it back from the admin route to carry on reading it out.
+async function readLiveCode(id) {
+  try {
+    const res = await fetch(API_BASE + '/admin/rounds/' + id + '/code', { credentials: 'include' });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) { return null; }
+}
+
+function renderLiveAdmin() {
+  const form = document.getElementById('liveOpenForm');
+  const panel = document.getElementById('liveOpenRound');
+
+  if (!adminRound) {
+    form.style.display = '';
+    panel.style.display = 'none';
+    const d = document.getElementById('lrDate');
+    if (!d.value) d.value = localToday();
+    return;
+  }
+
+  form.style.display = 'none';
+  panel.style.display = '';
+  const code = adminCode && adminCode.joinCode;
+  const n = adminRound.playerCount || 0;
+  const open = adminRound.status === 'open';
+  const where = adminRound.course || 'Live round';
+  panel.innerHTML = `
+    <p class="hint">${esc(where)}${adminRound.date ? ' · ' + esc(fmtDate(adminRound.date)) : ''} ·
+      ${open ? 'check-in open' : 'check-in closed · scoring'} · ${n} checked in</p>
+    <div class="code-out${code ? '' : ' none'}">${code
+      ? esc(code)
+      : 'No code — nobody can join or save a score until you issue one.'}</div>
+    ${code ? `<p class="hint" style="text-align:center">${esc(codeExpiryText())}</p>` : ''}
+    <button class="btn" onclick="joinOwnRound()">Open this round</button>
+    ${open ? '<button class="btn secondary" onclick="closeCheckin()">Close check-in</button>' : ''}
+    <button class="linkbtn" onclick="rotateLiveCode()">${code ? 'New code' : 'Issue a code'}</button>
+    ${code ? '<button class="linkbtn" onclick="revokeLiveCode()">Revoke code</button>' : ''}
+    ${n === 0 ? '<button class="linkbtn" onclick="discardLiveRound()">Discard round</button>' : ''}`;
+}
+
+function codeExpiryText() {
+  const at = adminCode && adminCode.codeExpiresAt;
+  if (!at) return '';
+  const d = new Date(at);
+  if (isNaN(d.getTime())) return '';
+  const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.getTime() <= Date.now()
+    ? 'Expired at ' + t + ' — issue a new code.'
+    : 'Read this out. Works until ' + t + '.';
+}
+
+async function openLiveRound() {
+  const btn = document.getElementById('lrOpenBtn');
+  const date = document.getElementById('lrDate').value;
+  const course = document.getElementById('lrCourse').value.trim();
+  if (!date) { showLiveAdminMsg('Pick a date for the round.', true); return; }
+
+  btn.disabled = true;
+  showLiveAdminMsg('Opening…', false);
+  try {
+    const round = await (await postAdmin('/admin/rounds', { date, course })).json();
+    adminRound = { id: round.id, date: round.date, course: round.course, status: round.status, playerCount: 0 };
+    adminCode = { joinCode: round.joinCode, codeExpiresAt: round.codeExpiresAt };
+    document.getElementById('lrCourse').value = '';
+    showLiveAdminMsg('Round open — read the code out.', false);
+    renderLiveAdmin();
+  } catch (e) {
+    liveAdminError(e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function rotateLiveCode() {
+  const had = !!(adminCode && adminCode.joinCode);
+  if (had && !confirm('Issue a new code? The current one stops working immediately, and anyone still scoring has to be read the new one.')) return;
+  try {
+    const r = await (await postAdmin('/admin/rounds/' + adminRound.id + '/code', { action: 'rotate' })).json();
+    adminCode = { joinCode: r.joinCode, codeExpiresAt: r.codeExpiresAt };
+    showLiveAdminMsg(had ? 'New code issued — the old one is dead.' : 'Code issued — players can join.', false);
+    renderLiveAdmin();
+  } catch (e) { liveAdminError(e); }
+}
+
+async function revokeLiveCode() {
+  if (!confirm('Revoke the code? Nobody can join or save a score until you issue a new one. The round and the scores already in it stay put.')) return;
+  try {
+    const r = await (await postAdmin('/admin/rounds/' + adminRound.id + '/code', { action: 'revoke' })).json();
+    adminCode = { joinCode: r.joinCode, codeExpiresAt: r.codeExpiresAt };
+    showLiveAdminMsg('Code revoked. Issue a new one to reopen the round.', false);
+    renderLiveAdmin();
+  } catch (e) { liveAdminError(e); }
+}
+
+// open → scoring. Its own step rather than part of finalizing because a late
+// check-in changes the tag pool, and therefore what everyone else can win.
+// Callable from the Admin card and from the live bar inside the round, so it
+// reports failures wherever the admin actually is.
+async function closeCheckin(roundId) {
+  const id = roundId || (adminRound && adminRound.id);
+  if (!id) return;
+  if (!confirm('Close check-in? Nobody new can join, but everyone already in can still enter scores.')) return;
+  try {
+    await patchAdmin('/admin/rounds/' + id, { status: 'scoring' });
+    if (adminRound && adminRound.id === id) adminRound.status = 'scoring';
+    if (isLive() && state.roundId === id) {
+      state.roundStatus = 'scoring';
+      save();
+      render();
+    }
+    showLiveAdminMsg('Check-in closed — scoring only.', false);
+    renderLiveAdmin();
+  } catch (e) {
+    if (route === 'admin') liveAdminError(e);
+    else if (String(e.message).includes('Failed to fetch')) setTimeout(adminSignIn, 800);
+    else alert('Could not close check-in: ' + e.message);
+  }
+}
+
+// Drop the admin into the round exactly where a player who typed the code
+// lands — there is no separate admin scoring path to keep in step.
+async function joinOwnRound() {
+  const code = adminCode && adminCode.joinCode;
+  if (!code) { showLiveAdminMsg('Issue a code first — the round needs one to be joinable.', true); return; }
+  try {
+    // Read the round back: the list endpoint carries no entries.
+    const res = await fetch(API_BASE + '/rounds/' + adminRound.id);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    enterLiveMode(await res.json(), code);
+  } catch (e) {
+    showLiveAdminMsg('Could not open the round: ' + e.message, true);
+  }
+}
+
+// Offered only while nobody is checked in. A round with entries is ended by
+// finalizing it — entries cascade on delete, so this must not become the
+// habitual way out of a round someone has already scored.
+async function discardLiveRound() {
+  if (!confirm('Discard this round? It is deleted outright. Offered only because nobody has checked in yet.')) return;
+  try {
+    const res = await fetch(API_BASE + '/admin/rounds/' + adminRound.id, {
+      method: 'DELETE', credentials: 'include'
+    });
+    if (res.status === 401 || res.status === 403) throw new Error('Failed to fetch');
+    if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+    if (isLive() && state.roundId === adminRound.id) leaveLiveRound(true, 'That round was discarded.');
+    adminRound = null;
+    adminCode = null;
+    showLiveAdminMsg('Round discarded.', false);
+    renderLiveAdmin();
+  } catch (e) { liveAdminError(e); }
+}
+
+// postAdmin/patchAdmin collapse 401/403 into 'Failed to fetch' so callers can
+// route to the Access login instead of showing a dead end. Same contract the
+// finalize path uses.
+function liveAdminError(e) {
+  if (String(e.message).includes('Failed to fetch')) {
+    showLiveAdminMsg('Sign-in required — redirecting…', true);
+    setTimeout(adminSignIn, 800);
+  } else {
+    showLiveAdminMsg(e.message, true);
+  }
+}
+
+function showLiveAdminMsg(text, isError) {
+  const msg = document.getElementById('lrMsg');
+  msg.textContent = text;
+  msg.style.display = '';
+  msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
 }
 
 // ── Writes: check-in, removal, scores ──
