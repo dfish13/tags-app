@@ -914,7 +914,7 @@ function setScore(id, val) {
   const n = val.trim() === '' ? null : parseInt(val, 10);
   p.score = (n !== null && !isNaN(n)) ? n : null;
   save();
-  if (isLive()) saveLiveScore(id);
+  if (isLive()) queueScoreWrite(id, p.score);
 }
 
 function resetRound() {
@@ -1343,13 +1343,22 @@ function sortLivePlayers(list) {
   return list.slice().sort((a, b) => a.tag - b.tag);
 }
 
-// Per-entry write state, driving the row indicator. 'pending'/'failed' also
-// mean "unflushed local edit" — a poll must not overwrite those.
+// Per-entry write state, driving the row indicator.
 let liveSave = new Map();     // entryId → { status, msg }
-let liveInFlight = new Map(); // entryId → seq of the newest write for it
-let liveWriteSeq = 0;
 let lastLiveWriteAt = 0;      // discards polls that started before a write
 let liveNotice = '';          // banner text for an error the player must act on
+
+// The outbox: score writes that the server has not yet confirmed. Persisted,
+// so a reload mid-round resumes them instead of losing whatever was in flight.
+//
+// At most ONE op per entry — a second edit to a row overwrites the queued
+// value rather than queueing behind it, because there is never a reason to
+// send an outdated score after a newer one. Flushed strictly one at a time,
+// which is also why this file no longer tracks per-write sequence numbers:
+// with a serial queue there is never a second write racing the first.
+let outbox = [];              // [{ entryId, score }] — head is flushed first
+let outboxHalted = false;     // stopped by an error retrying cannot fix
+const OUTBOX_KEY = 'tags-outbox-v1';
 
 function setSaveState(entryId, status, msg) {
   if (status === null) liveSave.delete(entryId);
@@ -1357,9 +1366,12 @@ function setSaveState(entryId, status, msg) {
   renderSaveStates();
 }
 
+// Queued means unflushed: the local value is newer than the server's, so a
+// poll must not overwrite it. Reading the queue rather than the indicator
+// keeps the two from disagreeing — an op dropped as unsendable (409) stops
+// blocking the merge the moment it leaves the queue.
 function hasUnflushedEdits(entryId) {
-  const s = liveSave.get(entryId);
-  return !!s && (s.status === 'pending' || s.status === 'failed');
+  return outbox.some(o => o.entryId === entryId);
 }
 
 const SAVE_LABEL = { pending: 'saving…', saved: 'saved', failed: 'not saved' };
@@ -1408,8 +1420,10 @@ function enterLiveMode(round, code) {
     localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(state));
   }
   liveSave = new Map();
-  liveInFlight = new Map();
   liveNotice = '';
+  // state.players is about to be replaced wholesale from the server, so
+  // nothing queued against the previous round still applies.
+  clearOutbox();
   state = {
     ...blankState(),
     mode: 'live',
@@ -1432,8 +1446,10 @@ function leaveLiveRound(silent, notice) {
   if (!silent && !confirm('Leave this live round? Scores already saved stay on the server — you can rejoin with the same code.')) return;
   stopLivePolling();
   liveSave = new Map();
-  liveInFlight = new Map();
   liveNotice = '';
+  // Matches the confirm() above: scores already saved stay on the server, and
+  // anything still queued is by definition not one of them.
+  clearOutbox();
   let restored = null;
   try {
     const raw = localStorage.getItem(LOCAL_BACKUP_KEY);
@@ -1820,6 +1836,10 @@ async function removeLiveEntries(ids) {
       lastLiveWriteAt = Date.now();
       state.players = state.players.filter(p => p.id !== id);
       liveSave.delete(id);
+      // A queued score for an entry that no longer exists would only 409 on
+      // the next flush — drop it now instead of spending a request to learn that.
+      const queued = outbox.find(o => o.entryId === id);
+      if (queued) dropOp(queued);
     } catch (e) {
       failures.push(liveErrorText(e));
       handleLiveError(e);
@@ -1832,31 +1852,158 @@ async function removeLiveEntries(ids) {
   render();
 }
 
-// PATCH one entry's score. Fired from setScore(), which runs on change (i.e.
-// on blur), so there's nothing to debounce — but two edits to the same row can
-// still overlap, and only the newest may write the indicator.
-async function saveLiveScore(entryId) {
-  const p = state.players.find(x => x.id === entryId);
-  if (!p) return;
-  const seq = ++liveWriteSeq;
-  liveInFlight.set(entryId, seq);
-  setSaveState(entryId, 'pending');
-  try {
-    const entry = await liveFetch('/rounds/' + state.roundId + '/entries/' + entryId, {
-      method: 'PATCH',
-      body: { score: p.score }
-    });
-    lastLiveWriteAt = Date.now();
-    if (liveInFlight.get(entryId) !== seq) return; // superseded by a newer edit
-    const i = state.players.findIndex(x => x.id === entryId);
-    if (i >= 0) state.players[i] = entryToPlayer(entry);
-    save();
-    setSaveState(entryId, 'saved');
-  } catch (e) {
-    if (liveInFlight.get(entryId) !== seq) return;
-    setSaveState(entryId, 'failed', liveErrorText(e));
-    handleLiveError(e);
+// ── The outbox ──
+// Queue a score write, then flush the queue. setScore() fires on change (i.e.
+// on blur), so there is nothing to debounce; the queue exists so a write that
+// fails survives both the failure and a reload.
+
+const OUTBOX_BASE_DELAY_MS = 2000;
+const OUTBOX_MAX_DELAY_MS = 30000;
+let outboxDelay = OUTBOX_BASE_DELAY_MS;
+let flushTimer = null;
+let flushing = false;
+
+// Persist under the round id: a queue left over from a round we are no longer
+// in must never be replayed into a different one.
+function saveOutbox() {
+  if (outbox.length) {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify({ roundId: state.roundId, ops: outbox }));
+  } else {
+    localStorage.removeItem(OUTBOX_KEY);
   }
+}
+
+function loadOutbox() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OUTBOX_KEY));
+    if (raw && raw.roundId === state.roundId && Array.isArray(raw.ops)) return raw.ops;
+  } catch (e) { /* unreadable — an empty queue is the safe reading */ }
+  return [];
+}
+
+// Abandon the queue. Used when the round itself is being left or replaced, so
+// it clears storage directly rather than via saveOutbox(), which keys on the
+// CURRENT state.roundId — by then already changed, or about to be.
+function clearOutbox() {
+  outbox = [];
+  outboxHalted = false;
+  outboxDelay = OUTBOX_BASE_DELAY_MS;
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+  localStorage.removeItem(OUTBOX_KEY);
+}
+
+function queueScoreWrite(entryId, score) {
+  const queued = outbox.find(o => o.entryId === entryId);
+  if (queued) queued.score = score;   // supersede: latest value wins
+  else outbox.push({ entryId, score });
+  saveOutbox();
+  setSaveState(entryId, 'pending');
+  scheduleFlush(0);
+}
+
+function scheduleFlush(delay) {
+  if (flushTimer || outboxHalted || !outbox.length) return;
+  flushTimer = setTimeout(() => { flushTimer = null; flushOutbox(); }, delay);
+}
+
+// A reconnect is new information, so it cancels any backoff still counting
+// down rather than waiting it out.
+function wakeOutbox() {
+  if (outboxHalted || !outbox.length) return;
+  outboxDelay = OUTBOX_BASE_DELAY_MS;
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+  scheduleFlush(0);
+}
+
+// Send the op at the head of the queue. The service worker never intercepts
+// non-GET (sw.js), so this always reaches the network — a write can never be
+// answered from cache and fake success.
+async function flushOutbox() {
+  if (flushing || outboxHalted || !isLive() || !outbox.length) return;
+  if (!navigator.onLine) return;  // the 'online' handler wakes us instead
+
+  flushing = true;
+  const op = outbox[0];
+  const sent = op.score;      // may be superseded while this request is in flight
+  const roundId = state.roundId;
+
+  // Someone can leave the round while this request is in the air. By the time
+  // it answers, state.players holds the restored LOCAL round, whose ids come
+  // from a counter and can collide with server entry ids — so applying the
+  // response then could overwrite an unrelated local player. Bail instead.
+  const sameRound = () => isLive() && state.roundId === roundId;
+
+  try {
+    const entry = await liveFetch('/rounds/' + roundId + '/entries/' + op.entryId, {
+      method: 'PATCH',
+      body: { score: sent }
+    });
+    if (!sameRound()) return;
+    lastLiveWriteAt = Date.now();
+    // Settle only if the value we sent is still the value queued. If a newer
+    // edit landed mid-flight, this response is already stale: leave the op in
+    // place so the newer value gets its own trip, and don't touch the row.
+    if (op.score === sent) {
+      dropOp(op);
+      const i = state.players.findIndex(x => x.id === op.entryId);
+      if (i >= 0) state.players[i] = entryToPlayer(entry);
+      save();
+      setSaveState(op.entryId, 'saved');
+    }
+    outboxDelay = OUTBOX_BASE_DELAY_MS;
+  } catch (e) {
+    if (!sameRound()) return;
+    onFlushFailed(op, e);
+  } finally {
+    flushing = false;
+  }
+
+  scheduleFlush(0);  // drains the next op; no-op if halted, empty, or backing off
+}
+
+function dropOp(op) {
+  const i = outbox.indexOf(op);
+  if (i >= 0) outbox.splice(i, 1);
+  saveOutbox();
+}
+
+function onFlushFailed(op, e) {
+  const status = e instanceof LiveError ? e.status : 0;
+
+  // 401/403/429 — the code is wrong, rotated, expired, or this IP has spent
+  // its budget. The limiter counts failures, so a retry loop here would burn
+  // what's left and lock the whole group out of the round. Halt the queue
+  // entirely; getting a fresh code goes through leaveLiveRound, which clears
+  // it. Deliberately not just "skip this op": every queued op carries the
+  // same dead code, so trying the next one only spends the budget faster.
+  if (status === 401 || status === 403 || status === 429) {
+    outboxHalted = true;
+    setSaveState(op.entryId, 'failed', liveErrorText(e));
+    handleLiveError(e);
+    return;
+  }
+
+  // 409 — the round moved on (entry gone, check-in closed, finalized).
+  // Replaying cannot fix that, so drop the op and clear its indicator rather
+  // than leave 'not saved' on a row the reconciling poll is about to correct.
+  if (status === 409) {
+    dropOp(op);
+    setSaveState(op.entryId, null);
+    handleLiveError(e);
+    return;
+  }
+
+  // 404 — the round is gone. handleLiveError leaves it, which clears the queue.
+  if (status === 404) {
+    handleLiveError(e);
+    return;
+  }
+
+  // Transport failure or a 5xx: exactly what this queue exists for. Keep the
+  // op and back off. The row reads 'not saved', with the retry in its tooltip.
+  setSaveState(op.entryId, 'failed', liveErrorText(e));
+  outboxDelay = Math.min(outboxDelay * 2, OUTBOX_MAX_DELAY_MS);
+  scheduleFlush(outboxDelay);
 }
 
 function showCheckinMsg(text, isError) {
@@ -1932,12 +2079,19 @@ function mergeLiveRound(round) {
   for (const id of Array.from(liveSave.keys())) {
     if (!state.players.some(p => p.id === id)) liveSave.delete(id);
   }
+  // Same for anything still queued against one of those entries: it can only
+  // 409 now. The 409 branch would clear it anyway; this just saves the trip.
+  const gone = outbox.filter(o => !state.players.some(p => p.id === o.entryId));
+  for (const op of gone) dropOp(op);
   save();
   render();
 }
 
 function applyFinalizedRound(round) {
   stopLivePolling();
+  // A finalized round takes no further score writes, so anything queued is
+  // moot — the server's numbers below are now the record.
+  clearOutbox();
   state.roundStatus = 'finalized';
   state.players = sortLivePlayers((round.entries || []).map(entryToPlayer));
   state.course = round.course || state.course;
@@ -3067,23 +3221,34 @@ function darken(hex, amount) {
 window.addEventListener('hashchange', router);
 
 // Live rounds: catch up the moment the app becomes usable again, rather than
-// waiting out the rest of a 15s tick. Both handlers no-op outside live mode.
+// waiting out the rest of a 15s tick or an outbox backoff. All of these no-op
+// outside live mode, and wakeOutbox() no-ops with nothing queued.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) pollLiveRound();
+  if (!document.hidden) { pollLiveRound(); wakeOutbox(); }
 });
 window.addEventListener('online', () => {
   pollLiveRound();
   renderLiveBar();
+  wakeOutbox();
 });
 
 loadConfig();
+
+// Rehydrate the outbox BEFORE the first render, so a reload mid-round paints
+// the affected rows as 'saving…' straight away rather than blank until the
+// first flush gets round to them.
+if (isLive() && state.roundStatus !== 'finalized') {
+  outbox = loadOutbox();
+  for (const op of outbox) setSaveState(op.entryId, 'pending');
+}
 router();
 
 // A reload mid-round lands back in the live round it was in — the code and
-// round id are in localStorage, so resume polling.
+// round id are in localStorage, so resume polling and any unflushed writes.
 if (isLive() && state.roundStatus !== 'finalized') {
   startLivePolling();
   pollLiveRound();
+  scheduleFlush(0);
 }
 
 // Offline support: sw.js caches the shell and last-known API reads, serving

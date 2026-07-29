@@ -82,9 +82,26 @@ The code is never in any API response a non-admin can read, and never in a URL
 `Referer`. An admin who reloads mid-round reads it back from
 `GET /api/admin/rounds/:id/code`.
 
-Scores are written straight through; if a write fails the row says so rather
-than silently retrying. Leaving a live round is non-destructive — the round and
-its entries stay on the server, and the same code rejoins it.
+Scores go through an **outbox** rather than straight to the network, so a write
+that fails isn't lost. The row reads *not saved*, and the queue retries with
+backoff as soon as the connection is back — including across a reload, since it
+is stored alongside the round. Re-editing a row replaces what's queued for it
+rather than stacking another write behind it, so the server only ever receives
+the latest value.
+
+**A write is never faked.** Nothing reads as saved until the server confirms it,
+and the service worker never intercepts non-GET requests, so an offline write
+cannot be answered from cache. Two cases deliberately do *not* retry:
+
+- **A rejected or expired code.** Retrying would spend the shared per-IP failure
+  budget and lock the whole group out of the round. The queue stops and asks for
+  the current code instead.
+- **A round that has moved on** — finalized, or the entry deleted. Replaying
+  can't fix that, so the write is dropped and the next poll reconciles the row.
+
+Leaving a live round is non-destructive — the round and its entries stay on the
+server, and the same code rejoins it. Anything still queued is discarded along
+with the round, so an unsent score never follows you into a different one.
 
 ## Running locally
 
@@ -119,9 +136,18 @@ npm run dev            # tsx watch
 npm run db:generate    # generate a migration from schema changes
 npm run db:migrate     # apply migrations
 npm run db:seed        # seed tags + admin
+
+npm run typecheck      # no output = clean
+npm run test:db        # throwaway Postgres on 127.0.0.1:55433 + migrate + suite
+npm run test:db:down   # destroy it
 ```
 
 Set `DATABASE_URL` in the environment (see `.env.example`).
+
+⚠️ The suite's `resetDb()` truncates **every table in whatever `DATABASE_URL`
+points at**. `npm run test:db` aims it at its own throwaway container on an
+odd port for that reason — never point the suite at a dev or production
+database.
 
 ## Running your own league
 
@@ -182,6 +208,28 @@ like a tightening but breaks player check-in entirely.
 
 The API and database containers bind to `127.0.0.1` only — they're reachable
 solely through the tunnel, which is what makes the admin auth model safe.
+
+### Deploying a change
+
+The two halves deploy differently, and most changes only need one of them:
+
+- **Backend** — `docker compose up -d --build api`. The container entrypoint is
+  `migrate.js && seed.js && index.js`, so **deploying applies migrations
+  automatically**. Keep the previous image tagged (e.g.
+  `tags-app-api:rollback-<sha>`) so a rollback is one `docker tag` away.
+- **Frontend** — `index.html` is served straight off the checkout by a plain
+  static server, so **`git pull` alone ships it**: no rebuild, no restart.
+
+So check `git diff --stat <deployed-sha> origin/main` first and skip the
+rebuild entirely when nothing under `backend/` changed.
+
+**No cache-busting step is needed.** [sw.js](sw.js) serves navigations
+network-first, so a new `index.html` is live on the next load and the cache is
+only an offline fallback — don't bump `CACHE` reflexively on a frontend deploy.
+
+Worth verifying after any deploy: that the served `index.html` matches the
+deployed commit, and that the auth split still holds — `/api/rounds/live`
+returns `200` while `/api/admin/*` returns `302` to the Access login.
 
 ## License
 

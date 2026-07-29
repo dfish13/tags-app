@@ -603,6 +603,11 @@ roundsAdminRouter.get("/:id/code", async (req, res) => {
 // Rotate or revoke the join code. Rotating cuts off anyone who has the old one
 // (a code read out to the wrong group, say); revoking closes the round to
 // player writes entirely without finalizing it.
+//
+// Known gap: this has the same read-then-write race `finalize` had, fixed
+// there with `SELECT … FOR UPDATE`. Two concurrent rotations are near-harmless
+// — last write wins and both callers end up holding a valid code — so it was
+// left alone. Apply the same pattern here if that ever stops being true.
 roundsAdminRouter.post("/:id/code", async (req, res, next) => {
   const id = Number(req.params.id);
   const action = String(req.body?.action ?? "rotate");
