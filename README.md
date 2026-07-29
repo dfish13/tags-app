@@ -12,6 +12,7 @@ past rounds.
 - **League Home** — public, no login. Current tag standings and round history.
 - **Play** — run a round: register players, enter scores, preview results, and finalize.
 - **Admin** — manage the roster (add/edit/remove players and their tags). Admin-gated.
+- **New players mid-round** — an admin adding someone who isn't on the roster yet can create them and add them to the round in one step, after being shown every roster player who might already be them.
 - **Finalize** — computes tag assignments, snapshots them, and updates standings.
 - **Export/import** — run a round with no admin present, then hand it to an admin to review and finalize.
 - **Live rounds** — an admin opens a round with a join code; players at the course check themselves in and enter their own scores from their own phones.
@@ -102,6 +103,36 @@ cannot be answered from cache. Two cases deliberately do *not* retry:
 Leaving a live round is non-destructive — the round and its entries stay on the
 server, and the same code rejoins it. Anything still queued is discarded along
 with the round, so an unsent score never follows you into a different one.
+
+## Adding a player who isn't on the roster
+
+Only roster players can be put in a round, which used to mean stopping
+mid-setup, going to the Admin tab, adding them, and coming back. Now typing a
+name with no exact roster match opens a resolver in place.
+
+It lists **every roster player who might already be them**, each with the
+current tag and why it was suggested — *near-identical name*, *same surname*,
+*shares a name*. Picking one corrects the spelling to the roster's and fills in
+their current tag. Below that, and **only for a signed-in admin**, is the option
+to create the player: it adds them to the league roster with the tag number in
+the form and puts them in the round in one action.
+
+Matching is deliberately loose. Player names have **no uniqueness constraint**,
+so wrongly concluding someone is new creates a second entry and permanently
+splits their tag history — while a wrong suggestion costs one glance. It
+normalises case, accents and punctuation (`Renee` = `Renée`, `OBrien` =
+`O'Brien`), handles two letters typed in the wrong order (`Doe` for `Ode`),
+reversed order (`Doe, Jane`), initials (`J Doe`), short forms (`Chris` →
+`Christopher`) and a table of nicknames no string metric can connect (`Mike` →
+`Michael`, `Bob` → `Robert`).
+
+That normalisation also applies to the *exact* match, so typing `Renee Doe`
+now resolves to an existing `Renée Doe` rather than silently creating a
+duplicate.
+
+Non-admins see the same candidate list — useful on its own for finding the
+right spelling — but are told to ask an admin rather than offered the create
+option. `POST /api/admin/players` is Access-gated regardless.
 
 ## Running locally
 

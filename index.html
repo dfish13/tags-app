@@ -130,6 +130,27 @@
   .suggestions .none { padding: 12px; font-size: 14px; color: var(--muted); }
   .name-locked { color: var(--green); font-size: 12px; font-weight: 700; margin-top: 4px; }
 
+  /* "No exact roster match" resolver: possible existing players, then the
+     admin-only escape hatch of creating a new one. */
+  .nomatch {
+    margin-top: 12px; padding: 12px;
+    border: 1.5px solid var(--accent, #e8a33d); border-radius: 10px;
+    background: color-mix(in srgb, var(--accent, #e8a33d) 10%, #fff);
+  }
+  .nomatch h3 { margin: 0 0 4px; font-size: 15px; }
+  .nomatch .warn { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .nomatch .cand {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 10px 12px; margin-bottom: 6px; text-align: left; cursor: pointer;
+    background: #fff; border: 1px solid var(--line); border-radius: 9px;
+    font-size: 15px; font-family: inherit;
+  }
+  .nomatch .cand:hover, .nomatch .cand:focus { background: #dff0f2; border-color: var(--green); }
+  .nomatch .cand .who { flex: 1; min-width: 0; font-weight: 700; }
+  .nomatch .cand .meta { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  .nomatch .newp { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .nomatch .newp .hint { margin-top: 6px; }
+
   /* Inline roster edit panel */
   .row-edit {
     border: 1.5px solid var(--green); border-radius: 10px;
@@ -436,6 +457,9 @@
       </div>
       <button class="btn" id="pAddBtn" onclick="addPlayer()">Add player</button>
       <div id="checkinMsg" class="hint" style="display:none"></div>
+      <!-- Shown when the typed name has no exact roster match: every plausible
+           existing player first, and only then the option to create one. -->
+      <div id="noMatchPanel" class="nomatch" style="display:none"></div>
     </div>
 
     <!-- Live round past check-in: the add form above is hidden, this explains why -->
@@ -532,7 +556,7 @@
         <label for="lrDate">Date</label>
         <input type="date" id="lrDate">
         <label for="lrCourse">Course</label>
-        <input type="text" id="lrCourse" autocomplete="off" placeholder="e.g. Valmont">
+        <input type="text" id="lrCourse" autocomplete="off" placeholder="Course name">
         <button class="btn" id="lrOpenBtn" onclick="openLiveRound()">Open round</button>
       </div>
       <div id="liveOpenRound" style="display:none"></div>
@@ -730,6 +754,10 @@ function goStep(s) {
     loadRosterForSetup();
     document.getElementById('rCourse').value = state.course || '';
     document.getElementById('rDate').value = state.playDate || localToday();
+    // Decides whether the no-match resolver may offer "add as a new player".
+    // Cheap and silent — a non-admin just gets a 401 and sees the ask-an-admin
+    // wording instead.
+    ensureAdminChecked();
   }
   if (s === 'results') {
     document.getElementById('resultsDate').textContent = isLive()
@@ -749,13 +777,20 @@ function addPlayer() {
 
   if (!name) { alert('Enter a name.'); return; }
 
-  // Constraint: only players on the DB roster can be added to a round.
-  // Match the typed name against the roster (case-insensitive, exact).
-  const match = roster.find(r => r.name.toLowerCase() === name.toLowerCase());
+  // Constraint: only players on the DB roster can be added to a round. Matched
+  // on the NORMALIZED name, so "Jose"/"José" and "OBrien"/"O'Brien" resolve to
+  // the existing player instead of quietly creating a second one.
+  const nq = normalizeName(name);
+  // A name of pure punctuation normalizes to '' — don't let that match a
+  // roster entry that also normalizes to ''.
+  const match = nq ? roster.find(r => normalizeName(r.name) === nq) : null;
   if (!match) {
-    alert('“' + name + '” is not on the roster. Pick a suggested name, or add them in the Admin tab first.');
+    // Not an alert: the resolver has to list every plausible existing player,
+    // and offer an admin the one-step add. See renderNoMatch().
+    showNoMatch(name);
     return;
   }
+  dismissNoMatch();
   if (state.players.some(p => p.rosterId === match.id)) {
     alert(match.name + ' is already in this round.');
     return;
@@ -790,6 +825,7 @@ async function loadRosterForSetup() {
 function onNameInput() {
   const q = document.getElementById('pName').value.trim().toLowerCase();
   document.getElementById('nameLocked').style.display = 'none';
+  dismissNoMatch();  // editing the name invalidates whatever it resolved to
   if (!q) { hideSuggestions(); return; }
   sugItems = roster
     .filter(r => r.name.toLowerCase().includes(q))
@@ -801,7 +837,8 @@ function onNameInput() {
 function renderSuggestions(q) {
   const box = document.getElementById('suggestions');
   if (sugItems.length === 0) {
-    box.innerHTML = '<div class="none">No roster match. Add them in the Admin tab first.</div>';
+    box.innerHTML = '<div class="none">No roster match yet — press Add player to see close matches' +
+      (adminEmail ? ', or add them as a new player.' : '.') + '</div>';
   } else {
     box.innerHTML = sugItems.map((r, i) => {
       const idx = r.name.toLowerCase().indexOf(q);
@@ -829,24 +866,9 @@ function hideSuggestions() {
 function pickSuggestion(i) {
   const r = sugItems[i];
   if (!r) return;
-  const input = document.getElementById('pName');
-  input.value = r.name;
   hideSuggestions();
-  const lock = document.getElementById('nameLocked');
-  // Prefill the incoming tag from the DB's current holding — hand-typing 30
-  // tags per round is 30 typo chances that corrupt redistribution. Kept
-  // editable (and select()ed so typing overwrites) because untracked pickup
-  // rounds can leave the DB stale vs the physical tag in hand.
-  const tagInput = document.getElementById('pTag');
-  if (r.tagNumber != null) {
-    tagInput.value = r.tagNumber;
-    lock.textContent = '✓ ' + r.name + ' — current tag #' + r.tagNumber + ' (edit if outdated)';
-  } else {
-    lock.textContent = '✓ ' + r.name + ' (roster)';
-  }
-  lock.style.display = '';
-  tagInput.focus();
-  tagInput.select();
+  dismissNoMatch();
+  fillPlayerFromRoster(r);
 }
 
 function onNameKey(e) {
@@ -879,6 +901,290 @@ function clearNameField() {
   document.getElementById('pName').value = '';
   document.getElementById('nameLocked').style.display = 'none';
   hideSuggestions();
+  dismissNoMatch();
+}
+
+// Fill the add-player form from a roster entry. Shared by the typeahead and
+// the no-match resolver so both prefill the tag the same way.
+function fillPlayerFromRoster(r) {
+  document.getElementById('pName').value = r.name;
+  const lock = document.getElementById('nameLocked');
+  const tagInput = document.getElementById('pTag');
+  // Prefill the incoming tag from the DB's current holding — hand-typing 30
+  // tags per round is 30 typo chances that corrupt redistribution. Kept
+  // editable (and select()ed so typing overwrites) because untracked pickup
+  // rounds can leave the DB stale vs the physical tag in hand.
+  if (r.tagNumber != null) {
+    tagInput.value = r.tagNumber;
+    lock.textContent = '✓ ' + r.name + ' — current tag #' + r.tagNumber + ' (edit if outdated)';
+  } else {
+    lock.textContent = '✓ ' + r.name + ' (roster)';
+  }
+  lock.style.display = '';
+  tagInput.focus();
+  tagInput.select();
+}
+
+// ─── Name matching ────────────────────────────────────────
+// Deciding "this player is not on the roster" is the dangerous call in this
+// app: player names have no uniqueness constraint, so a wrong answer creates a
+// second entry and permanently splits someone's tag history. A wrong *match*
+// suggestion, by contrast, costs one glance. So this is tuned for recall —
+// show anything plausible, and never let "add as new" be the quiet default.
+
+function normalizeName(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // strip accents: José → Jose
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')                        // O'Brien / O-Brien → o brien
+    .trim();
+}
+
+// Damerau-Levenshtein (optimal string alignment). The transposition case is
+// the point: two adjacent letters typed in the wrong order is ONE edit here,
+// where plain Levenshtein scores it as two and can push a real match out of
+// range.
+function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const d = [];
+  for (let i = 0; i <= m; i++) { d[i] = new Array(n + 1).fill(0); d[i][0] = i; }
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + cost);
+      }
+    }
+  }
+  return d[m][n];
+}
+
+// Short forms no string metric can connect — "Bob" is not a typo of "Robert".
+// Grouped rather than paired so aliases of one formal name all match each
+// other. Extend freely; a missing entry only costs a suggestion.
+const NICKNAME_GROUPS = [
+  ['michael','mike','mickey','mick'], ['robert','rob','bob','bobby','robbie'],
+  ['william','will','bill','billy','liam'], ['james','jim','jimmy','jamie'],
+  ['richard','rick','ricky','dick','rich'], ['david','dave','davey'],
+  ['steven','stephen','steve'], ['thomas','tom','tommy'], ['anthony','tony'],
+  ['christopher','chris','topher'], ['nicholas','nick','nicky'],
+  ['daniel','dan','danny'], ['joseph','joe','joey'], ['john','jack','johnny','jon'],
+  ['benjamin','ben','benny'], ['samuel','sam','sammy'], ['matthew','matt','matty'],
+  ['gregory','greg'], ['edward','ed','eddie','ted','teddy'], ['timothy','tim','timmy'],
+  ['patrick','pat','paddy'], ['andrew','andy','drew'], ['alexander','alex','xander'],
+  ['charles','charlie','chuck','chas'], ['francis','frank','frankie'],
+  ['henry','hank','harry'], ['zachary','zach','zack'], ['jonathan','jon','jonny'],
+  ['kenneth','ken','kenny'], ['ronald','ron','ronnie'], ['lawrence','larry','laurie'],
+  ['katherine','catherine','kate','katie','kathy','cathy'],
+  ['elizabeth','liz','beth','betsy','eliza'], ['margaret','maggie','peggy','meg'],
+  ['jennifer','jen','jenny'], ['jessica','jess','jessie'], ['rebecca','becky','becca'],
+  ['susan','sue','susie'], ['christina','christine','tina','chris'],
+  ['deborah','debbie','deb'], ['patricia','pat','patty','tricia']
+];
+const NICKNAMES = (() => {
+  const m = new Map();
+  for (const group of NICKNAME_GROUPS) {
+    for (const name of group) {
+      if (!m.has(name)) m.set(name, new Set());
+      for (const other of group) if (other !== name) m.get(name).add(other);
+    }
+  }
+  return m;
+})();
+
+// Do two single name-parts plausibly refer to the same person?
+function tokensPair(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length === 1 || b.length === 1) {           // "J Smith" vs "John Smith"
+    const initial = a.length === 1 ? a : b;
+    const full = a.length === 1 ? b : a;
+    return full.startsWith(initial);
+  }
+  if (a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a))) return true;
+  if (Math.max(a.length, b.length) >= 4 && editDistance(a, b) <= 1) return true;  // Jon/John
+  const alias = NICKNAMES.get(a);
+  return !!alias && alias.has(b);
+}
+
+// Greedy one-to-one pairing. Fine for the two or three tokens a name has.
+function pairAllTokens(qt, nt) {
+  if (qt.length !== nt.length) return false;
+  const used = new Array(nt.length).fill(false);
+  for (const a of qt) {
+    let hit = -1;
+    for (let j = 0; j < nt.length; j++) {
+      if (!used[j] && tokensPair(a, nt[j])) { hit = j; break; }
+    }
+    if (hit < 0) return false;
+    used[hit] = true;
+  }
+  return true;
+}
+
+// → { score, why } or null. `why` is shown to the admin: a suggestion you can
+// see the reasoning for is one you can dismiss confidently.
+function nameSimilarity(typed, rosterName) {
+  const q = normalizeName(typed), n = normalizeName(rosterName);
+  if (!q || !n) return null;
+  if (q === n) return { score: 1, why: 'already on the roster' };
+
+  const qt = q.split(' '), nt = n.split(' ');
+  const sorted = list => list.slice().sort().join(' ');
+
+  if (qt.length === nt.length && sorted(qt) === sorted(nt)) {
+    return { score: 0.96, why: 'same name, different order' };
+  }
+  if (pairAllTokens(qt, nt)) return { score: 0.92, why: 'near-identical name' };
+  if (q.length >= 3 && n.length >= 3 && (n.includes(q) || q.includes(n))) {
+    return { score: 0.88, why: 'contains what you typed' };
+  }
+  // Surname agreement is the strongest single signal on a league roster, and
+  // catches differing token counts ("John Smith" vs "John A Smith").
+  if (qt.length > 1 && nt.length > 1 && tokensPair(qt[qt.length - 1], nt[nt.length - 1])) {
+    return tokensPair(qt[0], nt[0])
+      ? { score: 0.90, why: 'same first and last name' }
+      : { score: 0.82, why: 'same surname' };
+  }
+  const dist = editDistance(q, n);
+  const sim = 1 - dist / Math.max(q.length, n.length);
+  if (dist <= 2 || sim >= 0.7) {
+    return { score: 0.55 + sim * 0.25, why: 'similar spelling' };
+  }
+  // Deliberately loose last resort: any shared name part at all. Noisy on
+  // common first names, which is the correct trade right before creating one.
+  for (const a of qt) {
+    for (const b of nt) if (a.length >= 3 && tokensPair(a, b)) return { score: 0.5, why: 'shares a name' };
+  }
+  return null;
+}
+
+function findNameCandidates(typed, limit) {
+  const out = [];
+  for (const r of roster) {
+    const m = nameSimilarity(typed, r.name);
+    if (m) out.push({ player: r, score: m.score, why: m.why });
+  }
+  out.sort((a, b) => b.score - a.score || a.player.name.localeCompare(b.player.name));
+  return out.slice(0, limit || 8);
+}
+
+// ─── "No exact match" resolver ────────────────────────────
+
+let noMatchName = null;   // the name typed that matched nothing exactly
+let noMatchCands = [];    // candidates as last rendered (display only)
+
+function showNoMatch(name) {
+  noMatchName = name;
+  renderNoMatch();
+  document.getElementById('noMatchPanel').scrollIntoView({ block: 'nearest' });
+}
+
+function dismissNoMatch() {
+  if (!noMatchName) return;
+  noMatchName = null;
+  noMatchCands = [];
+  renderNoMatch();
+}
+
+// Re-rendered from render() as well as directly, so the admin-only option
+// appears as soon as ensureAdminChecked() resolves rather than needing a retry.
+function renderNoMatch() {
+  const panel = document.getElementById('noMatchPanel');
+  if (!panel) return;
+  if (!noMatchName) { panel.style.display = 'none'; noMatchCands = []; return; }
+
+  noMatchCands = findNameCandidates(noMatchName);
+  // Keyed by roster id, not list position: render() recomputes this list, and
+  // a roster refresh landing between paint and tap would shift an index onto
+  // the wrong player.
+  const list = noMatchCands.map(c => `
+    <button type="button" class="cand" onclick="useCandidate(${c.player.id})">
+      <span class="who">${esc(c.player.name)}</span>
+      <span class="meta">${c.player.tagNumber != null ? 'tag #' + c.player.tagNumber + ' · ' : ''}${esc(c.why)}</span>
+    </button>`).join('');
+
+  panel.innerHTML = `
+    <h3>No exact roster match for “${esc(noMatchName)}”</h3>
+    ${noMatchCands.length
+      ? `<p class="warn">If any of these is them, pick it. Adding a second entry for
+         someone already on the roster splits their tag history.</p>${list}`
+      : `<p class="warn">Nobody on the roster is close to this name.</p>`}
+    <div class="newp">
+      ${adminEmail
+        ? `<button class="btn secondary" onclick="addPlayerAndRoster()">${
+             noMatchCands.length ? 'None of these — add' : 'Add'
+           } “${esc(noMatchName)}” as a new player</button>
+           <p class="hint">Puts them on the league roster with the tag number above, then into this round.</p>`
+        : `<p class="hint">If they really are new, an admin can add them to the roster
+           and this round in one step from here — ask them to sign in.</p>`}
+      <button class="linkbtn" onclick="dismissNoMatch()">Cancel</button>
+    </div>`;
+  panel.style.display = '';
+}
+
+function useCandidate(rosterId) {
+  const r = roster.find(p => p.id === rosterId);
+  if (!r) return;
+  dismissNoMatch();
+  fillPlayerFromRoster(r);
+}
+
+// Admin-only: create the roster player and put them in the round in one go.
+// The tag typed into the form is the one being ISSUED to them, so it becomes
+// both their roster holding and their incoming tag for this round.
+async function addPlayerAndRoster() {
+  const name = (noMatchName || '').trim();
+  const tag = parseInt(document.getElementById('pTag').value, 10);
+  const ace = document.getElementById('pAce').checked;
+  const ctp = document.getElementById('pCtp').checked;
+  const btn = document.getElementById('pAddBtn');
+
+  // Belt and braces: the route is Access-gated anyway, but don't offer an
+  // action that can only 401.
+  if (!adminEmail) { showCheckinMsg('Only an admin can add someone to the roster.', true); return; }
+  if (!name) { dismissNoMatch(); return; }
+  if (!(tag >= 1 && tag <= 300)) { showCheckinMsg('Enter the tag number to issue them (1–300) first.', true); return; }
+  if (state.players.some(p => p.tag === tag)) { showCheckinMsg('Tag #' + tag + ' is already taken in this round.', true); return; }
+  if (!confirm('Add “' + name + '” to the league roster with tag #' + tag + ', and to this round?\n\n' +
+               'Only if they are genuinely new — a duplicate splits a player’s tag history.')) return;
+
+  btn.disabled = true;
+  try {
+    const res = await fetch(API_BASE + '/admin/players', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name, tagNumber: tag })
+    });
+    if (res.status === 401 || res.status === 403) {
+      showCheckinMsg('Sign-in required — redirecting…', true);
+      setTimeout(adminSignIn, 800);
+      return;
+    }
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      throw new Error(b.error || ('HTTP ' + res.status));  // e.g. tag already held
+    }
+    const created = await res.json();
+    roster.push({ id: created.id, name: created.name, tagNumber: created.tagNumber });
+    dismissNoMatch();
+
+    if (isLive()) { await checkInPlayer(created, tag, ace, ctp); return; }
+    state.players.push({ id: nextId(), rosterId: created.id, name: created.name, tag, ace, ctp, score: null });
+    save();
+    clearAddPlayerForm();
+    showCheckinMsg('Added “' + created.name + '” to the roster and this round.', false);
+    render();
+  } catch (e) {
+    showCheckinMsg(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 let removeMode = false;
@@ -962,6 +1268,7 @@ function render() {
   // is right even once the round is done.
   renderLiveBar();
   renderLiveUi();
+  renderNoMatch();
 
   const t = poolTotals();
   document.getElementById('aceTotal').textContent = '$' + t.ace;
