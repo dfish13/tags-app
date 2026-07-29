@@ -134,6 +134,29 @@ Non-admins see the same candidate list — useful on its own for finding the
 right spelling — but are told to ask an admin rather than offered the create
 option. `POST /api/admin/players` is Access-gated regardless.
 
+## Courses
+
+`rounds.course` is **free text — there is no `courses` table.** Both course
+fields (round setup, and the admin's open-a-live-round card) offer a typeahead
+whose list is derived from the distinct course names on existing rounds, read
+from `GET /api/rounds`, which the app already fetches. Nothing to migrate, and
+the list populates itself from history.
+
+Names are deduped on a normalised form with the most recently played spelling
+winning, so if `Oak Ridge` and `oak  ridge` both exist in history the typeahead
+offers one entry, not two. Typing a course that is *close to* an existing one
+raises an inline "did you mean…?" — free text means a typo would otherwise
+become a permanent suggestion and split a course's history the same way a
+duplicate roster entry splits a player's.
+
+Typing something genuinely new is still fine: the field accepts anything, and
+the new name simply joins the list once that round exists.
+
+If a course ever needs data of its own — holes, par, location, per-course
+scoring on the Stats page — that is the point to promote it to a real table
+with a foreign key from `rounds`. Until then the derived list carries no schema
+cost.
+
 ## Running locally
 
 ### Backend + database (Docker)

@@ -434,8 +434,15 @@
       <label for="rDate">Play date</label>
       <input type="date" id="rDate" onchange="setPlayDate(this.value)">
       <label for="rCourse">Course (optional)</label>
-      <input type="text" id="rCourse" autocomplete="off" placeholder="e.g. Maple Hill"
-        onchange="setCourse(this.value)">
+      <div class="typeahead">
+        <input type="text" id="rCourse" autocomplete="off" placeholder="Course name"
+          role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="rCourseSugs"
+          oninput="onCourseInput('rCourse')" onfocus="onCourseInput('rCourse')"
+          onkeydown="onCourseKey(event,'rCourse')" onblur="onCourseBlur('rCourse')"
+          onchange="setCourse(this.value)">
+        <div id="rCourseSugs" class="suggestions" role="listbox" style="display:none"></div>
+      </div>
+      <div id="rCourseHint" class="hint" style="display:none"></div>
     </div>
 
     <div class="card" id="addPlayerCard">
@@ -556,7 +563,14 @@
         <label for="lrDate">Date</label>
         <input type="date" id="lrDate">
         <label for="lrCourse">Course</label>
-        <input type="text" id="lrCourse" autocomplete="off" placeholder="Course name">
+        <div class="typeahead">
+          <input type="text" id="lrCourse" autocomplete="off" placeholder="Course name"
+            role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="lrCourseSugs"
+            oninput="onCourseInput('lrCourse')" onfocus="onCourseInput('lrCourse')"
+            onkeydown="onCourseKey(event,'lrCourse')" onblur="onCourseBlur('lrCourse')">
+          <div id="lrCourseSugs" class="suggestions" role="listbox" style="display:none"></div>
+        </div>
+        <div id="lrCourseHint" class="hint" style="display:none"></div>
         <button class="btn" id="lrOpenBtn" onclick="openLiveRound()">Open round</button>
       </div>
       <div id="liveOpenRound" style="display:none"></div>
@@ -754,6 +768,9 @@ function goStep(s) {
     loadRosterForSetup();
     document.getElementById('rCourse').value = state.course || '';
     document.getElementById('rDate').value = state.playDate || localToday();
+    // Re-check the near-miss hint once the list arrives, not just with
+    // whatever was cached when the step opened.
+    loadCourses().then(() => showCourseHint('rCourse'));
     // Decides whether the no-match resolver may offer "add as a new player".
     // Cheap and silent — a non-admin just gets a 401 and sees the ask-an-admin
     // wording instead.
@@ -1071,6 +1088,145 @@ function findNameCandidates(typed, limit) {
   }
   out.sort((a, b) => b.score - a.score || a.player.name.localeCompare(b.player.name));
   return out.slice(0, limit || 8);
+}
+
+// ─── Courses ──────────────────────────────────────────────
+// There is no courses table — `rounds.course` is free text (see README). The
+// list is therefore DERIVED from the rounds the app already fetches, which is
+// all a typeahead needs and costs no migration. Deduped on the normalized
+// form, keeping the most recently used spelling, so any historic drift
+// collapses to one entry instead of offering the same course three ways.
+
+let courses = [];          // distinct course names, most recently played first
+let courseSugItems = [];   // what the open suggestion list is showing
+let courseSugActive = -1;  // keyboard-highlighted index
+
+// `rounds` arrives newest-first, so first-seen is the most recent spelling.
+function setCoursesFrom(rounds) {
+  const seen = new Set();
+  const out = [];
+  for (const r of rounds || []) {
+    const name = String(r.course || '').trim();
+    const key = normalizeName(name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  courses = out;
+}
+
+async function loadCourses() {
+  try {
+    const res = await fetch(API_BASE + '/rounds');
+    if (res.ok) setCoursesFrom(await res.json());
+  } catch (e) { /* offline — keep the last known list */ }
+}
+
+// One typeahead serving both course fields. The suggestion box and hint are
+// found by convention: <id>Sugs and <id>Hint.
+function onCourseInput(id) {
+  const q = normalizeName(document.getElementById(id).value);
+  courseSugActive = -1;
+  courseSugItems = (q ? courses.filter(c => normalizeName(c).includes(q)) : courses.slice()).slice(0, 8);
+  renderCourseSugs(id);
+  showCourseHint(id);
+}
+
+function renderCourseSugs(id) {
+  const box = document.getElementById(id + 'Sugs');
+  const input = document.getElementById(id);
+  if (!box || !courseSugItems.length) { hideCourseSugs(id); return; }
+  box.innerHTML = courseSugItems.map((c, i) => `
+    <div class="sug ${i === courseSugActive ? 'active' : ''}" role="option"
+         id="${id}-sug-${i}" aria-selected="${i === courseSugActive}"
+         onmousedown="pickCourse('${id}',${i})">${esc(c)}</div>`).join('');
+  box.style.display = '';
+  input.setAttribute('aria-expanded', 'true');
+  if (courseSugActive >= 0) input.setAttribute('aria-activedescendant', id + '-sug-' + courseSugActive);
+  else input.removeAttribute('aria-activedescendant');
+}
+
+function hideCourseSugs(id) {
+  const box = document.getElementById(id + 'Sugs');
+  if (box) box.style.display = 'none';
+  const input = document.getElementById(id);
+  if (input) {
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+  }
+}
+
+function pickCourse(id, i) {
+  const name = courseSugItems[i];
+  if (name === undefined) return;
+  setCourseField(id, name);
+  hideCourseSugs(id);
+}
+
+// Setting .value from script does NOT fire `change`, so the round's own
+// persistence has to be called explicitly — otherwise picking a suggestion
+// looks right and saves nothing.
+function setCourseField(id, name) {
+  document.getElementById(id).value = name;
+  if (id === 'rCourse') setCourse(name);
+  showCourseHint(id);
+}
+
+function onCourseKey(e, id) {
+  const box = document.getElementById(id + 'Sugs');
+  if (!box || box.style.display === 'none') return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    courseSugActive = Math.min(courseSugActive + 1, courseSugItems.length - 1);
+    renderCourseSugs(id);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    courseSugActive = Math.max(courseSugActive - 1, 0);
+    renderCourseSugs(id);
+  } else if (e.key === 'Enter' && courseSugActive >= 0) {
+    e.preventDefault();
+    pickCourse(id, courseSugActive);
+  } else if (e.key === 'Escape') {
+    hideCourseSugs(id);
+  }
+}
+
+function onCourseBlur(id) {
+  // Delay so a mousedown on a suggestion registers before we hide.
+  setTimeout(() => { hideCourseSugs(id); showCourseHint(id); }, 150);
+}
+
+// Free text means a typo becomes a permanent suggestion, so warn when a typed
+// course is nearly one that exists. Deliberately NOT nameSimilarity(): its
+// person-name rules (surname agreement, nicknames) misfire here — two parks
+// sharing the word "Park" are not the same place.
+function courseNearMiss(value) {
+  const v = normalizeName(value);
+  if (!v) return null;
+  if (courses.some(c => normalizeName(c) === v)) return null;  // already exact
+  let best = null, bestSim = 0;
+  for (const c of courses) {
+    const n = normalizeName(c);
+    const sim = 1 - editDistance(v, n) / Math.max(v.length, n.length);
+    if (sim > bestSim) { bestSim = sim; best = c; }
+  }
+  return bestSim >= 0.8 ? best : null;
+}
+
+function showCourseHint(id) {
+  const hint = document.getElementById(id + 'Hint');
+  const input = document.getElementById(id);
+  if (!hint || !input) return;
+  const near = courseNearMiss(input.value);
+  if (!near) { hint.style.display = 'none'; hint.textContent = ''; return; }
+  hint.innerHTML = 'Close to an existing course — did you mean ' +
+    `<button type="button" class="linkbtn" id="${id}Fix">${esc(near)}</button>?`;
+  hint.style.display = '';
+  // Handler attached rather than inlined: a course name can contain quotes.
+  document.getElementById(id + 'Fix').onclick = () => {
+    setCourseField(id, near);
+    hideCourseSugs(id);
+  };
 }
 
 // ─── "No exact match" resolver ────────────────────────────
@@ -1930,6 +2086,7 @@ async function loadLiveAdmin() {
     const res = await fetch(API_BASE + '/rounds');
     if (!res.ok) return;
     const all = await res.json();
+    setCoursesFrom(all);  // same payload the course typeahead needs — no second fetch
     adminRound = all.find(r => r.status !== 'finalized') || null;  // newest first
     adminCode = adminRound ? await readLiveCode(adminRound.id) : null;
   } catch (e) { /* offline — leave the panel showing whatever we last knew */ }
