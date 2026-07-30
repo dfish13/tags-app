@@ -134,6 +134,39 @@ Non-admins see the same candidate list — useful on its own for finding the
 right spelling — but are told to ask an admin rather than offered the create
 option. `POST /api/admin/players` is Access-gated regardless.
 
+The hint under the name field says which of those two you are looking at, so a
+signed-in admin isn't told to go to the Admin tab for something they can do
+right there.
+
+## Bringing a tag the app thinks someone else has
+
+`tag_holders` only moves when a round is **finalized**, so it goes stale the
+moment a tag changes hands outside a sanctioned round — someone quits and passes
+their tag on, or a casual round redistributes tags nobody entered. Turning up
+holding a tag the app has against another player is therefore routine, not an
+error. **The physical tag in someone's hand is the truth**, so both paths say
+whose tag the record thinks it is, and then let it through.
+
+They differ in *when* the old holder loses it:
+
+- **Checking in an existing roster player** writes nothing to `tag_holders`.
+  Finalizing redistributes this round's pool, and that is what takes the tag off
+  the old holder — they end up with **no tag**, because a displaced holder's real
+  tag is genuinely unknowable. Deliberate: check-in is a **join-code** write, and
+  that tier reaches one round's entries and nothing else. Letting it edit
+  `tag_holders` would let anyone holding the code rewrite league standings.
+- **Creating a new roster player** has to record a holding, so it takes the tag
+  immediately, and the response names who was `displaced` so the app can say so.
+  That is an **admin** write, and it matches what `PATCH /api/admin/players/:id/tag`
+  has always done. It needs `takeTag: true`, which the app sends only after the
+  admin has been shown the holder's name and agreed — so a mistyped number in the
+  Admin tab's roster form still bounces with a plain `409`.
+
+The `409` carries a structured `heldBy` alongside the message, which is what
+lets the check-in flow offer "reissue it anyway" instead of dead-ending an admin
+at a first tee — the case this whole path exists for, since a new player is
+almost always issued a **recycled** number.
+
 ## Courses
 
 `rounds.course` is **free text — there is no `courses` table.** Both course

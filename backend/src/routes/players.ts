@@ -40,6 +40,13 @@ export const playersAdminRouter = Router();
 playersAdminRouter.post("/", async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
   const tagNumber = Number(req.body?.tagNumber);
+  // Opt-in: issue the tag even though another player is recorded as holding it,
+  // leaving that player tagless — the same "take the tag" semantics as
+  // PATCH /:id/tag, and for the same reason (a displaced holder's real tag is
+  // genuinely unknown). Off by default so a mistyped number in the Admin tab's
+  // roster form still bounces; the mid-round check-in flow names the holder,
+  // asks, and only then retries with it set.
+  const takeTag = Boolean(req.body?.takeTag);
   if (!name) return res.status(400).json({ error: "name is required" });
   if (!Number.isInteger(tagNumber) || tagNumber < 1 || tagNumber > 300) {
     return res
@@ -52,29 +59,40 @@ playersAdminRouter.post("/", async (req, res) => {
       const [tag] = await tx.select().from(tags).where(eq(tags.number, tagNumber));
       if (!tag) throw new HttpError(400, `Tag #${tagNumber} does not exist`);
 
-      // Enforce one-player-per-tag: reject if already held.
+      // One player per tag. Who holds it now decides whether this is a typo to
+      // bounce or a tag being recycled to someone new — `heldBy` is what lets
+      // the caller ask that question instead of just reporting a dead end.
       const [held] = await tx
         .select({ playerId: tagHolders.playerId, holderName: players.name })
         .from(tagHolders)
         .innerJoin(players, eq(players.id, tagHolders.playerId))
         .where(eq(tagHolders.tagId, tag.id));
-      if (held) {
+      if (held && !takeTag) {
         throw new HttpError(
           409,
-          `Tag #${tagNumber} is already held by ${held.holderName}`
+          `Tag #${tagNumber} is already held by ${held.holderName}`,
+          { heldBy: { id: held.playerId, name: held.holderName } }
         );
       }
 
       const [player] = await tx.insert(players).values({ name }).returning();
+      // onConflictDoUpdate rather than a plain insert: with takeTag set, the
+      // tag_holders row for this tag already exists and belongs to `held`.
       await tx
         .insert(tagHolders)
-        .values({ tagId: tag.id, playerId: player.id });
-      return { ...player, tagNumber };
+        .values({ tagId: tag.id, playerId: player.id })
+        .onConflictDoUpdate({
+          target: tagHolders.tagId,
+          set: { playerId: player.id, since: new Date() },
+        });
+      // `displaced` so the caller can say who just lost their tag — silently
+      // unassigning someone is exactly the surprise this flow exists to avoid.
+      return { ...player, tagNumber, displaced: held?.holderName ?? null };
     });
     res.status(201).json(created);
   } catch (err) {
     if (err instanceof HttpError)
-      return res.status(err.status).json({ error: err.message });
+      return res.status(err.status).json({ error: err.message, ...err.extra });
     throw err;
   }
 });
@@ -161,7 +179,13 @@ playersAdminRouter.delete("/:id", async (req, res) => {
 });
 
 class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+    // Merged into the JSON body alongside `error`, for a failure the client
+    // has to act on rather than just display.
+    public extra?: Record<string, unknown>
+  ) {
     super(message);
   }
 }

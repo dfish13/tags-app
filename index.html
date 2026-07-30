@@ -455,7 +455,10 @@
         <div id="suggestions" class="suggestions" role="listbox" style="display:none"></div>
       </div>
       <div id="nameLocked" class="name-locked" style="display:none"></div>
-      <p class="hint">Only players on the roster can be added. Manage the roster in the Admin tab.</p>
+      <!-- Text set in renderLiveUi(): it said "only players on the roster can be
+           added" long after an admin could add one from right here, which read
+           as a dead end and sent people to the Admin tab for nothing. -->
+      <p class="hint" id="rosterHint"></p>
       <label for="pTag">Incoming tag number (1–300)</label>
       <input type="number" id="pTag" inputmode="numeric" min="1" max="300" placeholder="e.g. 42">
       <div class="checks">
@@ -814,6 +817,7 @@ function addPlayer() {
   }
   if (!(tag >= 1 && tag <= 300)) { alert('Tag must be a number from 1 to 300.'); return; }
   if (state.players.some(p => p.tag === tag)) { alert('Tag #' + tag + ' is already taken.'); return; }
+  if (!confirmTagTakeover(tag, match.id)) return;
 
   // Live round: the server owns the player list, so this is a check-in request
   // rather than a local push. Same validations run first either way — they
@@ -827,8 +831,29 @@ function addPlayer() {
   render();
 }
 
+// Someone turning up with a tag the app has against another player is routine,
+// not an error: tag_holders only moves when a round is finalized, so any trade
+// outside a sanctioned round leaves the record stale. The physical tag in their
+// hand is the truth — so warn, name the holder, and let it through.
+//
+// Nothing is written to tag_holders here. Finalizing redistributes this round's
+// pool, and that is what actually takes the tag off the old holder (they end up
+// tagless, since a displaced holder's real tag is unknowable). Doing it at
+// check-in instead would let anyone holding the round code rewrite league
+// standings, which the code tier is deliberately too narrow for.
+function confirmTagTakeover(tag, playerId) {
+  const holder = roster.find(r => r.tagNumber === tag && r.id !== playerId);
+  if (!holder) return true;
+  return confirm('Tag #' + tag + ' is currently recorded as held by ' + holder.name + '.\n\n' +
+    'If this player really has it, go ahead — the record is just out of date. ' +
+    holder.name + ' is left without a tag once this round is finalized.');
+}
+
 // ─── Roster typeahead ─────────────────────────────────────
-let roster = [];           // cached DB roster [{id, name}]
+// Cached DB roster [{id, name, tagNumber}]. tagNumber is the player's CURRENT
+// holding, and confirmTagTakeover() depends on it being there — don't narrow
+// what loadRosterForSetup() keeps.
+let roster = [];
 let sugItems = [];         // current suggestion list
 let sugActive = -1;        // keyboard-highlighted index
 
@@ -1293,7 +1318,10 @@ function useCandidate(rosterId) {
 // Admin-only: create the roster player and put them in the round in one go.
 // The tag typed into the form is the one being ISSUED to them, so it becomes
 // both their roster holding and their incoming tag for this round.
-async function addPlayerAndRoster() {
+// `takeTag` is set only by the retry below, after the admin has been told whose
+// tag they're reissuing. Never passed on the first attempt: the server naming
+// the current holder is what makes that prompt possible.
+async function addPlayerAndRoster(takeTag) {
   const name = (noMatchName || '').trim();
   const tag = parseInt(document.getElementById('pTag').value, 10);
   const ace = document.getElementById('pAce').checked;
@@ -1306,7 +1334,8 @@ async function addPlayerAndRoster() {
   if (!name) { dismissNoMatch(); return; }
   if (!(tag >= 1 && tag <= 300)) { showCheckinMsg('Enter the tag number to issue them (1–300) first.', true); return; }
   if (state.players.some(p => p.tag === tag)) { showCheckinMsg('Tag #' + tag + ' is already taken in this round.', true); return; }
-  if (!confirm('Add “' + name + '” to the league roster with tag #' + tag + ', and to this round?\n\n' +
+  if (!takeTag &&
+      !confirm('Add “' + name + '” to the league roster with tag #' + tag + ', and to this round?\n\n' +
                'Only if they are genuinely new — a duplicate splits a player’s tag history.')) return;
 
   btn.disabled = true;
@@ -1315,7 +1344,7 @@ async function addPlayerAndRoster() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ name, tagNumber: tag })
+      body: JSON.stringify({ name, tagNumber: tag, takeTag: !!takeTag })
     });
     if (res.status === 401 || res.status === 403) {
       showCheckinMsg('Sign-in required — redirecting…', true);
@@ -1324,17 +1353,38 @@ async function addPlayerAndRoster() {
     }
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
-      throw new Error(b.error || ('HTTP ' + res.status));  // e.g. tag already held
+      // The tag is on the books against someone else. Almost always a recycled
+      // tag — the old holder quit and handed it on — so this used to be a dead
+      // end for the one flow that most needs to work at a first tee. Name them
+      // and offer to reissue it.
+      if (res.status === 409 && b.heldBy && b.heldBy.name) {
+        if (!confirm('Tag #' + tag + ' is currently recorded as held by ' + b.heldBy.name + '.\n\n' +
+                     'Issuing it to “' + name + '” takes it from them: ' + b.heldBy.name +
+                     ' is left without a tag until they declare one. Continue?')) {
+          showCheckinMsg('Cancelled — give “' + name + '” a different tag number.', true);
+          return;
+        }
+        return addPlayerAndRoster(true);
+      }
+      throw new Error(b.error || ('HTTP ' + res.status));
     }
     const created = await res.json();
     roster.push({ id: created.id, name: created.name, tagNumber: created.tagNumber });
+    // The displaced holder no longer has this tag. Clear it in the cache so the
+    // typeahead and confirmTagTakeover() stop citing a tag they've lost.
+    if (created.displaced) {
+      for (const r of roster) {
+        if (r.tagNumber === created.tagNumber && r.id !== created.id) r.tagNumber = null;
+      }
+    }
+    const note = created.displaced ? ' ' + created.displaced + ' no longer has a tag.' : '';
     dismissNoMatch();
 
-    if (isLive()) { await checkInPlayer(created, tag, ace, ctp); return; }
+    if (isLive()) { await checkInPlayer(created, tag, ace, ctp, note); return; }
     state.players.push({ id: nextId(), rosterId: created.id, name: created.name, tag, ace, ctp, score: null });
     save();
     clearAddPlayerForm();
-    showCheckinMsg('Added “' + created.name + '” to the roster and this round.', false);
+    showCheckinMsg('Added “' + created.name + '” to the roster and this round.' + note, false);
     render();
   } catch (e) {
     showCheckinMsg(e.message, true);
@@ -2269,7 +2319,9 @@ function showLiveAdminMsg(text, isError) {
 
 // ── Writes: check-in, removal, scores ──
 
-async function checkInPlayer(match, tag, ace, ctp) {
+// `note` is appended to the success line — used when creating the player also
+// took a tag off someone, so the two facts land in one message.
+async function checkInPlayer(match, tag, ace, ctp, note) {
   const btn = document.getElementById('pAddBtn');
   btn.disabled = true;
   showCheckinMsg('Checking in ' + match.name + '…', false);
@@ -2282,7 +2334,7 @@ async function checkInPlayer(match, tag, ace, ctp) {
     state.players = sortLivePlayers(state.players.concat(entryToPlayer(entry)));
     save();
     clearAddPlayerForm();
-    showCheckinMsg(match.name + ' checked in with tag #' + tag + '.', false);
+    showCheckinMsg(match.name + ' checked in with tag #' + tag + '.' + (note || ''), false);
     render();
   } catch (e) {
     showCheckinMsg(liveErrorText(e), true);
@@ -2631,6 +2683,12 @@ function renderLiveUi() {
   show('exportCard', !live); // a live round is already on the server
   document.getElementById('addPlayerTitle').textContent = live ? 'Check in a player' : 'Add player';
   document.getElementById('pAddBtn').textContent = live ? 'Check in' : 'Add player';
+  // Admin-dependent, not mode-dependent, but it lives here so it re-renders
+  // when ensureAdminChecked() resolves. An admin can create a roster player
+  // from this card, so don't tell them they can't.
+  document.getElementById('rosterHint').textContent = adminEmail
+    ? 'Start typing a roster name. If they’re not on the roster yet, you can add them to the league from here.'
+    : 'Only players on the roster can be added. An admin can add someone new — from here, or in the Admin tab.';
   document.getElementById('playersTitle').textContent = live ? 'Checked in' : 'Players';
   document.getElementById('scoresHint').textContent = live
     ? 'Scores save to the round as you enter them — anyone in the group can fill in any row.'
