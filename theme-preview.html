@@ -9,13 +9,34 @@
   like, and copy its THEME_* values into your .env. Delete this file when done.
   Renders a mockup using the SAME CSS-variable model as the real app, so what
   you see here matches what applyTheme() produces in index.html.
+
+  Dark themes are not a separate switch: the app infers "this is a dark theme"
+  from THEME_BG's own brightness and derives the card/line/text/muted surfaces
+  from it, so .env stays at five variables. The derivation below is a copy of
+  applyTheme()'s — if you change one, change both.
+
+  The live-round panel is here to be checked, not chosen. Its neon is fixed on
+  purpose (a live round is a state signal, like a recording light), so the thing
+  to look for as you cycle is whether it still reads as obviously separate from
+  whatever the rest of the theme is doing.
 -->
 <style>
   :root {
-    --green: #042a2b; --green-dark: #021819; --bg: #eef3f3; --card: #fcfcfc;
-    --line: #d7e2e2; --text: #042a2b; --muted: #5b7374; --danger: #c0392b;
-    --accent: #f4e04d; --blue: #5eb1bf;
+    --green: #042a2b; --green-dark: #021819; --on-primary: #ffffff;
+    --bg: #eef3f3; --card: #fcfcfc; --field: #ffffff; --line: #d7e2e2;
+    --text: #042a2b; --muted: #5b7374; --danger: #c0392b;
+    --accent: #f4e04d; --accent-text: #4a3500;
+    --blue: #5eb1bf; --secondary-text: #042a2b;
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+    --tint: #ffffff;
+    --soft: color-mix(in srgb, var(--blue) 24%, var(--tint));
+    --panel: color-mix(in srgb, var(--green) 5%, var(--tint));
+    --primary-ink: var(--green); --danger-ink: var(--danger);
+
+    /* Fixed across every theme — see the note above. */
+    --live: #54f2f2; --live-deep: #04191a; --live-ink: #dffdfd;
+    --live-muted: #8fc4c6;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -34,11 +55,17 @@
   .controls button:hover { background: #444; }
   .themeName { font-size: 16px; font-weight: 700; min-width: 220px; }
   .themeIdx { color: #999; font-size: 13px; }
+  /* Computed from THEME_BG, not stored on the preset — it's the same inference
+     the app makes, shown so you can see which side of the line a bg falls on. */
+  .mode {
+    font-size: 11px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+    border-radius: 999px; padding: 3px 9px; border: 1px solid;
+  }
+  .mode.dark { color: #9ad; border-color: #456; background: #1e2733; }
+  .mode.light { color: #ca6; border-color: #654; background: #2b2620; }
   .swatches { display: flex; gap: 6px; }
   .sw { width: 22px; height: 22px; border-radius: 5px; border: 1px solid #000; }
-  .envblock {
-    margin-left: auto; display: flex; align-items: center; gap: 10px;
-  }
+  .envblock { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   .envblock code {
     background: #000; color: #6f6; padding: 6px 10px; border-radius: 6px;
     font-size: 12px; white-space: pre; font-family: ui-monospace, Menlo, monospace;
@@ -52,13 +79,14 @@
     background: var(--bg); font-family: var(--font); color: var(--text);
     border-radius: 14px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.5);
   }
-  .m-header { background: var(--green); color: #fff; padding: 14px 16px; }
+  .m-header { background: var(--green); color: var(--on-primary); padding: 14px 16px; }
   .m-header h1 { margin: 0; font-size: 19px; font-weight: 700; }
   .m-header .sub { font-size: 13px; opacity: .85; margin-top: 2px; }
   .m-tabs { display: flex; background: var(--green-dark); }
-  .m-tabs div { flex: 1; text-align: center; color: rgba(255,255,255,.6);
+  .m-tabs div { flex: 1; text-align: center;
+    color: color-mix(in srgb, var(--on-primary) 60%, transparent);
     padding: 11px 4px; font-size: 13px; font-weight: 600; border-bottom: 3px solid transparent; }
-  .m-tabs div.active { color: #fff; border-bottom-color: var(--accent); }
+  .m-tabs div.active { color: var(--on-primary); border-bottom-color: var(--accent); }
   .m-main { padding: 16px; }
   .m-card { background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; padding: 14px; margin-bottom: 14px; }
@@ -68,20 +96,83 @@
     border-bottom: 1px solid var(--line); }
   .m-row:last-child { border-bottom: none; }
   .m-num { min-width: 42px; height: 42px; display: flex; align-items: center;
-    justify-content: center; background: var(--green); color: #fff;
+    justify-content: center; background: var(--green); color: var(--on-primary);
     border-radius: 9px; font-weight: 700; font-size: 16px; }
   .m-name { flex: 1; font-weight: 600; }
   .m-meta { font-size: 12px; color: var(--muted); }
   .m-tagout { min-width: 50px; height: 44px; display: flex; align-items: center;
-    justify-content: center; background: var(--accent); color: #4a3500;
+    justify-content: center; background: var(--accent); color: var(--accent-text);
     border-radius: 9px; font-weight: 800; font-size: 18px; }
-  .m-badge-ctp { background: var(--blue); color: #042a2b; border-radius: 5px;
+  .m-badge-ctp { background: var(--blue); color: var(--secondary-text); border-radius: 5px;
     padding: 1px 6px; font-size: 11px; font-weight: 800; }
+  .m-pill { display: inline-block; background: var(--soft); color: var(--text);
+    border-radius: 20px; padding: 4px 11px; font-size: 13px; font-weight: 600; }
+  .m-input { width: 100%; padding: 12px; font-size: 17px; margin-bottom: 4px;
+    border: 1px solid var(--line); border-radius: 9px;
+    background: var(--field); color: var(--text); font-family: var(--font); }
   .m-btn { width: 100%; padding: 14px; font-size: 17px; font-weight: 700;
-    border: none; border-radius: 10px; background: var(--green); color: #fff;
-    cursor: pointer; margin-top: 6px; }
-  .m-btn.sec { background: color-mix(in srgb, var(--green) 12%, #fff); color: var(--green); border: none; }
-  .m-btn.danger { background: color-mix(in srgb, var(--danger) 12%, #fff); color: var(--danger); border: none; }
+    border: none; border-radius: 10px; background: var(--green); color: var(--on-primary);
+    cursor: pointer; margin-top: 6px; font-family: var(--font); }
+  .m-btn.sec { background: color-mix(in srgb, var(--green) 12%, var(--tint)); color: var(--primary-ink); }
+  .m-btn.danger { background: color-mix(in srgb, var(--danger) 12%, var(--tint)); color: var(--danger-ink); }
+  .m-link { background: none; border: none; color: var(--primary-ink); padding: 8px 0 2px;
+    font-size: 14px; font-weight: 700; cursor: pointer; font-family: var(--font); }
+
+  /* ── Live round — fixed neon, identical to index.html's .live-* rules ── */
+  .m-live {
+    background: var(--live-deep); border: 1.5px solid var(--live);
+    border-radius: 12px; padding: 14px; margin-bottom: 14px;
+    box-shadow: 0 0 0 1px rgba(84,242,242,.16), 0 8px 26px -12px rgba(84,242,242,.55);
+  }
+  .m-live h2 { margin: 0 0 10px; font-size: 16px; color: var(--live); }
+  .m-live .m-hint, .m-live .m-meta { color: var(--live-muted); }
+  .m-live .m-name { color: var(--live); }
+  .m-live .m-row { border-bottom-color: rgba(84,242,242,.18); }
+  .m-live .m-btn { background: var(--live); color: var(--live-deep); }
+  .m-live .m-input {
+    background: rgba(84,242,242,.07); border-color: rgba(84,242,242,.35);
+    color: var(--live-ink);
+  }
+  .m-live .m-input::placeholder { color: rgba(143,196,198,.65); }
+  .live-dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--live); --pulse: 84,242,242;
+    animation: livePulse 2.2s ease-out infinite;
+  }
+  @keyframes livePulse {
+    0%   { box-shadow: 0 0 0 0 rgba(var(--pulse), .8); }
+    70%  { box-shadow: 0 0 0 8px rgba(var(--pulse), 0); }
+    100% { box-shadow: 0 0 0 0 rgba(var(--pulse), 0); }
+  }
+  .live-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--live); color: var(--live-deep);
+    border-radius: 999px; padding: 2px 9px 2px 7px;
+    font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px;
+    vertical-align: middle; margin-left: 6px;
+  }
+  .live-pill .live-dot { background: var(--live-deep); --pulse: 4,25,26; }
+  /* The in-round header treatment: neon underline + a dot in the subtitle. */
+  .m-header.live { box-shadow: inset 0 -3px 0 var(--live); }
+  .m-header.live .sub { color: var(--live); opacity: 1; font-weight: 600; }
+  .m-live-bar {
+    background: var(--live-deep); border: 1.5px solid var(--live);
+    border-radius: 12px; padding: 10px 12px; margin-bottom: 14px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 0 0 1px rgba(84,242,242,.16), 0 8px 26px -12px rgba(84,242,242,.55);
+  }
+  .m-live-bar .lb-title {
+    display: flex; align-items: center; gap: 7px;
+    color: var(--live); font-weight: 700; font-size: 14px;
+  }
+  .m-live-bar .lb-meta { color: var(--live-muted); font-size: 12px; }
+  .m-live-bar .lb-link {
+    margin-left: auto; background: none; border: none; color: var(--live);
+    font-size: 14px; font-weight: 700; cursor: pointer; font-family: var(--font);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot { animation: none; box-shadow: 0 0 5px 1px rgba(84,242,242,.55); }
+  }
 </style>
 </head>
 <body>
@@ -93,6 +184,8 @@
     <div class="themeName" id="themeName">—</div>
     <div class="themeIdx" id="themeIdx"></div>
   </div>
+  <span class="mode" id="modeChip">—</span>
+  <button id="liftBtn" onclick="toggleLift()">Live panel: —</button>
   <div class="swatches" id="swatches"></div>
   <div class="envblock">
     <code id="envText"></code>
@@ -103,21 +196,51 @@
 
 <div class="app">
   <div class="frame">
-    <div class="m-header">
+    <div class="m-header live">
       <h1>🥏 <span id="mLeague">Tags League</span></h1>
-      <div class="sub">League home</div>
+      <div class="sub"><span class="live-dot"></span> League home</div>
     </div>
     <div class="m-tabs">
-      <div class="active">Home</div><div>Play</div><div>Admin</div>
+      <div class="active">Home</div><div>Play</div><div>Admin</div><div>Stats</div>
     </div>
     <div class="m-main">
+
+      <div class="m-live-bar">
+        <div>
+          <div class="lb-title"><span class="live-dot"></span> Jul 29 · Cedar Flats</div>
+          <div class="lb-meta">check-in open · 4 players</div>
+        </div>
+        <button class="lb-link">Leave</button>
+      </div>
+
+      <div class="m-live">
+        <h2>Live round <span class="live-pill"><span class="live-dot"></span>live</span></h2>
+        <div class="m-row">
+          <div style="flex:1">
+            <div class="m-name">Cedar Flats</div>
+            <div class="m-meta">Jul 29, 2026 · 4 checked in · check-in open</div>
+          </div>
+        </div>
+        <input class="m-input" placeholder="ABC234" aria-label="Join code">
+        <div class="m-hint">Whoever opened the round has the code.</div>
+        <button class="m-btn">Join round</button>
+      </div>
+
       <div class="m-card">
         <h2>Current tag standings</h2>
         <div class="m-hint">Who holds each tag right now.</div>
-        <div class="m-row"><div class="m-num">1</div><div class="m-name">Alice</div></div>
-        <div class="m-row"><div class="m-num">7</div><div class="m-name">Bob</div></div>
-        <div class="m-row"><div class="m-num">23</div><div class="m-name">Cara</div></div>
+        <div class="m-row"><div class="m-num">1</div><div class="m-name">Alice</div>
+          <div class="m-meta">held 3 rounds</div></div>
+        <div class="m-row"><div class="m-num">7</div><div class="m-name">Bob</div>
+          <div class="m-meta">held 1 round</div></div>
+        <div class="m-row"><div class="m-num">23</div><div class="m-name">Cara</div>
+          <div class="m-meta">held 9 rounds</div></div>
+        <div style="margin-top:10px">
+          <span class="m-pill">Alice</span> <span class="m-pill">Bob</span>
+          <span class="m-pill">Cara</span>
+        </div>
       </div>
+
       <div class="m-card">
         <h2>Tag assignment — final</h2>
         <div class="m-row">
@@ -130,8 +253,10 @@
           <div style="flex:1"><div class="m-name">Evan</div>
           <div class="m-meta">Score 54 · brought #5</div></div>
         </div>
+        <input class="m-input" placeholder="Player name">
         <button class="m-btn">Finalize &amp; save round</button>
         <button class="m-btn sec">Export round for approval</button>
+        <button class="m-link">Edit this round</button>
         <button class="m-btn danger">Reset round</button>
       </div>
     </div>
@@ -141,9 +266,31 @@
 <script>
 // Curated themes: each a cohesive palette + a font that suits its mood.
 // primary=header/buttons/text, accent=tag badges/tab underline,
-// secondary=CTP, bg=page background.
+// secondary=CTP, bg=page background (and, by its brightness, light vs dark).
+//
+// The dark presets deliberately keep `secondary` away from cyan: the CTP badge
+// sitting next to a neon-cyan live panel would blunt the one signal that has to
+// stay unmistakable.
 const THEMES = [
-  { name: 'Evergreen (default)', primary:'#042a2b', accent:'#f4e04d', secondary:'#5eb1bf', bg:'#eef3f3',
+  // ── Dark ──
+  { name: 'Evergreen Dark', primary:'#0e5c52', accent:'#f4e04d', secondary:'#a3c48b', bg:'#08191a',
+    font:'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
+  { name: 'Midnight Slate', primary:'#2b3a67', accent:'#ffb703', secondary:'#b08bbb', bg:'#0d1220',
+    font:'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
+  { name: 'Charcoal Lime', primary:'#33452f', accent:'#c5f04e', secondary:'#9aa87c', bg:'#14180f',
+    font:'"Arial Rounded MT Bold", "Segoe UI", sans-serif' },
+  { name: 'Graphite Amber', primary:'#3a3a3c', accent:'#ffb340', secondary:'#b0a08a', bg:'#131314',
+    font:'"Helvetica Neue", Helvetica, Arial, sans-serif' },
+  { name: 'Deep Plum', primary:'#4a2545', accent:'#ffc857', secondary:'#d98fa5', bg:'#17101a',
+    font:'Georgia, "Times New Roman", serif' },
+  { name: 'Oxblood Night', primary:'#5c1f2b', accent:'#f2c14e', secondary:'#c98f8f', bg:'#1a0f12',
+    font:'"Rockwell", "Courier New", monospace' },
+  { name: 'Forest Mono Dark', primary:'#24402c', accent:'#a8d08a', secondary:'#8fa88f', bg:'#0c1410',
+    font:'ui-monospace, "SF Mono", Menlo, monospace' },
+  { name: 'Blueprint Dark', primary:'#1c3057', accent:'#fca311', secondary:'#8fa6c9', bg:'#0b1018',
+    font:'"Courier New", ui-monospace, monospace' },
+  // ── Light ──
+  { name: 'Evergreen (current)', primary:'#042a2b', accent:'#f4e04d', secondary:'#5eb1bf', bg:'#eef3f3',
     font:'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
   { name: 'Fairway', primary:'#1b4332', accent:'#f4a259', secondary:'#8ab17d', bg:'#f0f4ee',
     font:'"Trebuchet MS", "Segoe UI", sans-serif' },
@@ -153,46 +300,92 @@ const THEMES = [
     font:'"Rockwell", "Courier New", monospace' },
   { name: 'Sunset', primary:'#6a040f', accent:'#ffba08', secondary:'#e85d04', bg:'#fff4ec',
     font:'"Palatino Linotype", Palatino, serif' },
-  { name: 'Forest Mono', primary:'#2d3a2e', accent:'#a3b18a', secondary:'#588157', bg:'#eef2ec',
-    font:'ui-monospace, "SF Mono", Menlo, monospace' },
   { name: 'Slate & Amber', primary:'#2f3e46', accent:'#ffb703', secondary:'#84a98c', bg:'#eef1f2',
     font:'"Helvetica Neue", Helvetica, Arial, sans-serif' },
-  { name: 'Blueprint', primary:'#14213d', accent:'#fca311', secondary:'#5c7cba', bg:'#e9ecf3',
-    font:'"Courier New", ui-monospace, monospace' },
   { name: 'Berry', primary:'#3c1642', accent:'#f9c80e', secondary:'#b56576', bg:'#f5eef6',
     font:'Georgia, serif' },
   { name: 'Coastal', primary:'#005f73', accent:'#ee9b00', secondary:'#94d2bd', bg:'#eaf4f4',
     font:'"Segoe UI", "Helvetica Neue", sans-serif' },
-  { name: 'Charcoal Lime', primary:'#22333b', accent:'#c5f04e', secondary:'#7c9885', bg:'#eef1f0',
-    font:'"Arial Rounded MT Bold", "Segoe UI", sans-serif' },
-  { name: 'Autumn Trail', primary:'#582f0e', accent:'#ffd60a', secondary:'#a68a64', bg:'#f6f1e9',
-    font:'"Book Antiqua", Palatino, serif' },
 ];
 
 let i = 0;
+// On a dark theme the live panel's near-black body sits at ~1.0:1 against the
+// page, so the inversion that makes it obvious on a light site evaporates and
+// the neon rim carries the signal alone. "lifted" mixes the panel toward its own
+// neon so it is unmistakably a different surface again. Toggle to compare; the
+// neon itself never moves either way. Light themes ignore this.
+let lift = true;
 
-function darken(hex, amount) {
+// ── Color helpers: copies of index.html's. Keep them in sync. ──
+function mixTo(hex, amount, target) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
   if (!m) return hex;
-  const n = parseInt(m[1], 16), f = 1 - amount;
-  const r = Math.round(((n >> 16) & 255) * f);
-  const g = Math.round(((n >> 8) & 255) * f);
-  const b = Math.round((n & 255) * f);
-  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+  const n = parseInt(m[1], 16);
+  const ch = k => { const v = (n >> (k * 8)) & 255; return Math.round(v + (target - v) * amount); };
+  return '#' + [ch(2), ch(1), ch(0)].map(x => x.toString(16).padStart(2, '0')).join('');
 }
+const darken  = (hex, a) => mixTo(hex, a, 0);
+const lighten = (hex, a) => mixTo(hex, a, 255);
+
+function luma(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return (((n >> 16) & 255) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000;
+}
+function contrastText(hex) {
+  const y = luma(hex);
+  return y === null ? null : y >= 145 ? darken(hex, 0.75) : '#ffffff';
+}
+const isDark = t => { const y = luma(t.bg); return y !== null && y < 128; };
 
 function apply(t) {
   const r = document.documentElement.style;
   r.setProperty('--green', t.primary);
-  r.setProperty('--text', t.primary);
   r.setProperty('--green-dark', darken(t.primary, 0.35));
+  r.setProperty('--on-primary', contrastText(t.primary));
   r.setProperty('--accent', t.accent);
+  r.setProperty('--accent-text', contrastText(t.accent));
   r.setProperty('--blue', t.secondary);
+  r.setProperty('--secondary-text', contrastText(t.secondary));
   r.setProperty('--bg', t.bg);
   r.setProperty('--font', t.font);
 
+  // Same inference and the same mix amounts as applyTheme().
+  if (isDark(t)) {
+    r.setProperty('--card', lighten(t.bg, 0.07));
+    r.setProperty('--tint', lighten(t.bg, 0.07));
+    r.setProperty('--field', lighten(t.bg, 0.14));
+    r.setProperty('--line', lighten(t.bg, 0.22));
+    r.setProperty('--text', lighten(t.bg, 0.93));
+    r.setProperty('--muted', lighten(t.bg, 0.55));
+    r.setProperty('--primary-ink', lighten(t.primary, 0.45));
+    r.setProperty('--danger-ink', lighten('#c0392b', 0.35));
+    r.setProperty('--live-deep',
+      lift ? 'color-mix(in srgb, var(--live) 22%, #04191a)' : '#04191a');
+  } else {
+    r.setProperty('--card', '#fcfcfc');
+    r.setProperty('--tint', '#ffffff');
+    r.setProperty('--field', '#ffffff');
+    r.setProperty('--line', '#d7e2e2');
+    r.setProperty('--text', t.primary);
+    r.setProperty('--muted', '#5b7374');
+    r.setProperty('--primary-ink', t.primary);
+    r.setProperty('--danger-ink', '#c0392b');
+    r.setProperty('--live-deep', '#04191a');
+  }
+
   document.getElementById('themeName').textContent = t.name;
   document.getElementById('themeIdx').textContent = `${i + 1} / ${THEMES.length}`;
+  const chip = document.getElementById('modeChip');
+  chip.textContent = isDark(t) ? 'dark' : 'light';
+  chip.className = 'mode ' + (isDark(t) ? 'dark' : 'light');
+  const lb = document.getElementById('liftBtn');
+  lb.textContent = 'Live panel: ' + (lift ? 'lifted' : 'recessed');
+  lb.disabled = !isDark(t);
+  lb.style.opacity = isDark(t) ? '1' : '.4';
+  lb.title = isDark(t) ? 'Compare the live panel against this dark theme'
+                       : 'Only affects dark themes';
   document.getElementById('swatches').innerHTML =
     [t.primary, t.accent, t.secondary, t.bg].map(c => `<div class="sw" style="background:${c}"></div>`).join('');
   document.getElementById('envText').textContent = envFor(t);
@@ -211,6 +404,11 @@ function envFor(t) {
     `THEME_BG=${t.bg}`,
     `THEME_FONT='${t.font}'`,
   ].join('\n');
+}
+
+function toggleLift() {
+  lift = !lift;
+  apply(THEMES[i]);
 }
 
 function cycle(d) {

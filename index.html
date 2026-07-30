@@ -22,11 +22,29 @@
 
     --green: #042a2b;          /* primary (header, buttons) -> evergreen */
     --green-dark: #021819;     /* darker evergreen for active/pressed */
+    --on-primary: #ffffff;     /* text on primary fills; applyTheme() re-derives */
     --bg: #eef3f3;             /* soft tint of white toward pacific-blue */
     --card: #fcfcfc;           /* white */
+    --field: #ffffff;          /* inputs, chips, tappable candidates */
     --line: #d7e2e2;
     --text: #042a2b;           /* evergreen for body text */
     --muted: #5b7374;
+
+    /* The surface the pale fills below sit on. Every soft tint mixes toward
+       --tint rather than hardcoding white, so a dark theme only has to move
+       this one value and the whole set follows instead of washing out. */
+    --tint: #ffffff;
+    --soft: color-mix(in srgb, var(--blue) 24%, var(--tint));   /* pills, totals, hover */
+    --panel: color-mix(in srgb, var(--green) 5%, var(--tint));  /* inline edit panel */
+    --sel: color-mix(in srgb, var(--danger) 10%, var(--tint));  /* row picked for removal */
+
+    /* The primary and danger colors used as INK — link buttons, soft-button
+       labels, focus rings — rather than as a fill. On a light theme they are
+       just the colors themselves, so these track any rebrand for free. A dark
+       theme has to lift them: a color picked to carry white text on a fill
+       cannot also read AS text on a dark card. applyTheme() overrides them. */
+    --primary-ink: var(--green);
+    --danger-ink: var(--danger);
     --danger: #c0392b;         /* kept: destructive actions need red */
     --accent: #f4e04d;         /* banana-cream (ACE, tag output, tab underline) */
     --accent-text: #4a3500;    /* text on accent fills; applyTheme() re-derives */
@@ -64,7 +82,7 @@
   }
   header {
     background: var(--green);
-    color: #fff;
+    color: var(--on-primary);
     padding: 14px 16px;
     position: sticky;
     top: 0;
@@ -82,14 +100,14 @@
     flex: 1;
     background: none;
     border: none;
-    color: rgba(255,255,255,.6);
+    color: color-mix(in srgb, var(--on-primary) 60%, transparent);
     padding: 11px 4px;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     border-bottom: 3px solid transparent;
   }
-  .tabs button.active { color: #fff; border-bottom-color: var(--accent); }
+  .tabs button.active { color: var(--on-primary); border-bottom-color: var(--accent); }
   .tabs button:disabled { opacity: .35; }
   .tabs.subtabs { background: var(--green); }
   .tabs.subtabs button { font-size: 12px; padding: 9px 4px; }
@@ -112,23 +130,23 @@
     font-size: 17px;
     border: 1px solid var(--line);
     border-radius: 9px;
-    background: #fff;
+    background: var(--field);
   }
-  input:focus { outline: 2px solid var(--green); border-color: var(--green); }
+  input:focus { outline: 2px solid var(--primary-ink); border-color: var(--primary-ink); }
   textarea {
     width: 100%; min-height: 90px; padding: 12px; font-size: 14px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--field);
     resize: vertical; margin-top: 4px;
   }
-  textarea:focus { outline: 2px solid var(--green); border-color: var(--green); }
+  textarea:focus { outline: 2px solid var(--primary-ink); border-color: var(--primary-ink); }
 
   /* Typeahead / autocomplete for roster player names */
   .typeahead { position: relative; }
   .suggestions {
     position: absolute; left: 0; right: 0; top: 100%;
     z-index: 20; margin-top: 4px;
-    background: #fff; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 9px;
     box-shadow: 0 6px 18px rgba(0,0,0,.12);
     max-height: 240px; overflow-y: auto;
   }
@@ -137,27 +155,27 @@
     border-bottom: 1px solid var(--line);
   }
   .suggestions .sug:last-child { border-bottom: none; }
-  .suggestions .sug.active, .suggestions .sug:hover { background: #dff0f2; }
-  .suggestions .sug .match { font-weight: 800; color: var(--green); }
+  .suggestions .sug.active, .suggestions .sug:hover { background: var(--soft); }
+  .suggestions .sug .match { font-weight: 800; color: var(--primary-ink); }
   .suggestions .none { padding: 12px; font-size: 14px; color: var(--muted); }
-  .name-locked { color: var(--green); font-size: 12px; font-weight: 700; margin-top: 4px; }
+  .name-locked { color: var(--primary-ink); font-size: 12px; font-weight: 700; margin-top: 4px; }
 
   /* "No exact roster match" resolver: possible existing players, then the
      admin-only escape hatch of creating a new one. */
   .nomatch {
     margin-top: 12px; padding: 12px;
     border: 1.5px solid var(--accent, #e8a33d); border-radius: 10px;
-    background: color-mix(in srgb, var(--accent, #e8a33d) 10%, #fff);
+    background: color-mix(in srgb, var(--accent, #e8a33d) 10%, var(--tint));
   }
   .nomatch h3 { margin: 0 0 4px; font-size: 15px; }
   .nomatch .warn { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
   .nomatch .cand {
     display: flex; align-items: center; gap: 10px; width: 100%;
     padding: 10px 12px; margin-bottom: 6px; text-align: left; cursor: pointer;
-    background: #fff; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--field); border: 1px solid var(--line); border-radius: 9px;
     font-size: 15px; font-family: inherit;
   }
-  .nomatch .cand:hover, .nomatch .cand:focus { background: #dff0f2; border-color: var(--green); }
+  .nomatch .cand:hover, .nomatch .cand:focus { background: var(--soft); border-color: var(--primary-ink); }
   .nomatch .cand .who { flex: 1; min-width: 0; font-weight: 700; }
   .nomatch .cand .meta { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
   .nomatch .newp { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
@@ -165,8 +183,8 @@
 
   /* Inline roster edit panel */
   .row-edit {
-    border: 1.5px solid var(--green); border-radius: 10px;
-    padding: 10px 12px 12px; margin-bottom: 10px; background: #f7fbfb;
+    border: 1.5px solid var(--primary-ink); border-radius: 10px;
+    padding: 10px 12px 12px; margin-bottom: 10px; background: var(--panel);
   }
   /* Expanded round-history detail */
   .hist-detail {
@@ -179,7 +197,7 @@
     display: flex; align-items: center; gap: 7px;
     margin: 0; font-size: 15px; color: var(--text);
   }
-  .checks input { width: 22px; height: 22px; accent-color: var(--green); }
+  .checks input { width: 22px; height: 22px; accent-color: var(--primary-ink); }
 
   button.btn {
     width: 100%;
@@ -189,7 +207,7 @@
     border: none;
     border-radius: 10px;
     background: var(--green);
-    color: #fff;
+    color: var(--on-primary);
     cursor: pointer;
     margin-top: 14px;
   }
@@ -197,15 +215,15 @@
   /* Soft-filled secondary/danger: a light tint of the color, no border. The
      tint is derived from the palette so it adapts to any theme. */
   button.btn.secondary {
-    background: color-mix(in srgb, var(--green) 12%, #fff);
-    color: var(--green); border: none;
+    background: color-mix(in srgb, var(--green) 12%, var(--tint));
+    color: var(--primary-ink); border: none;
   }
-  button.btn.secondary:active { background: color-mix(in srgb, var(--green) 22%, #fff); }
+  button.btn.secondary:active { background: color-mix(in srgb, var(--green) 22%, var(--tint)); }
   button.btn.danger {
-    background: color-mix(in srgb, var(--danger) 12%, #fff);
-    color: var(--danger); border: none;
+    background: color-mix(in srgb, var(--danger) 12%, var(--tint));
+    color: var(--danger-ink); border: none;
   }
-  button.btn.danger:active { background: color-mix(in srgb, var(--danger) 22%, #fff); }
+  button.btn.danger:active { background: color-mix(in srgb, var(--danger) 22%, var(--tint)); }
 
   .row {
     display: flex;
@@ -218,7 +236,7 @@
   .row .num {
     min-width: 42px; height: 42px;
     display: flex; align-items: center; justify-content: center;
-    background: var(--green); color: #fff;
+    background: var(--green); color: var(--on-primary);
     border-radius: 9px; font-weight: 700; font-size: 16px;
     flex-shrink: 0;
   }
@@ -232,29 +250,29 @@
   .badge-ctp { background: var(--blue); color: var(--secondary-text); }
   .row .score-in { width: 80px; }
   .row .x {
-    background: none; border: none; color: var(--danger);
+    background: none; border: none; color: var(--danger-ink);
     font-size: 22px; cursor: pointer; padding: 4px 8px;
   }
   .linkbtn {
-    background: none; border: none; color: var(--green);
+    background: none; border: none; color: var(--primary-ink);
     font-size: 14px; font-weight: 700; cursor: pointer; padding: 4px 0;
   }
   .row.selectable { cursor: pointer; }
-  .row.selected { background: #fbecea; border-radius: 8px; }
-  .row .sel-check { width: 24px; height: 24px; accent-color: var(--danger); flex-shrink: 0; pointer-events: none; }
+  .row.selected { background: var(--sel); border-radius: 8px; }
+  .row .sel-check { width: 24px; height: 24px; accent-color: var(--danger-ink); flex-shrink: 0; pointer-events: none; }
   #removeBar { margin-top: 6px; }
 
   .pill {
-    display: inline-block; background: #dff0f2; color: var(--green-dark);
+    display: inline-block; background: var(--soft); color: var(--text);
     border-radius: 20px; padding: 4px 11px; font-size: 13px; font-weight: 600;
     margin: 3px 4px 0 0;
   }
   .empty { color: var(--muted); text-align: center; padding: 24px 0; font-size: 15px; }
   .totals { display: flex; gap: 12px; margin-top: 4px; }
   .totals .box {
-    flex: 1; background: #dff0f2; border-radius: 10px; padding: 10px; text-align: center;
+    flex: 1; background: var(--soft); border-radius: 10px; padding: 10px; text-align: center;
   }
-  .totals .box .big { font-size: 22px; font-weight: 800; color: var(--green-dark); }
+  .totals .box .big { font-size: 22px; font-weight: 800; color: var(--text); }
   .totals .box .lbl { font-size: 12px; color: var(--muted); }
   .hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
   .tie-flag {
@@ -273,7 +291,7 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .chip {
     display: inline-flex; align-items: center; gap: 7px;
-    background: #fff; color: var(--text);
+    background: var(--field); color: var(--text);
     border: 1.5px solid var(--line); border-radius: 20px;
     padding: 5px 12px; font-size: 13px; font-weight: 600;
     font-family: var(--font); cursor: pointer;
@@ -285,13 +303,13 @@
   .sug .sugtag { color: var(--muted); font-size: 12px; margin-left: 6px; }
   .range-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .rangebtn {
-    border: 1.5px solid var(--line); background: #fff; color: var(--muted);
+    border: 1.5px solid var(--line); background: var(--field); color: var(--muted);
     border-radius: 20px; padding: 5px 12px; font-size: 13px; font-weight: 600;
     font-family: var(--font); cursor: pointer;
   }
   .rangebtn.active {
-    border-color: var(--green); color: var(--green);
-    background: color-mix(in srgb, var(--green) 8%, #fff);
+    border-color: var(--primary-ink); color: var(--primary-ink);
+    background: color-mix(in srgb, var(--green) 8%, var(--tint));
   }
   .range-custom { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .range-custom input[type="date"] { flex: 1; width: auto; }
@@ -300,7 +318,7 @@
   .me-banner {
     display: flex; align-items: center; gap: 10px;
     padding: 10px; margin: 10px 0 4px;
-    background: color-mix(in srgb, var(--accent) 22%, #fff);
+    background: color-mix(in srgb, var(--accent) 22%, var(--tint));
     border: 1.5px solid var(--accent); border-radius: 10px;
   }
   .me-banner .num {
@@ -319,7 +337,7 @@
      Delta color stays on-theme: direction is carried by the arrow glyph, so
      up just gets primary emphasis and down recedes to muted. */
   .delta { font-size: 12px; font-weight: 800; white-space: nowrap; }
-  .delta.up { color: var(--green); }
+  .delta.up { color: var(--primary-ink); }
   .delta.down { color: var(--muted); }
   .row .rmeta {
     display: flex; flex-direction: column; align-items: flex-end;
@@ -336,7 +354,7 @@
   .chart-wrap svg { display: block; width: 100%; height: auto; font-family: var(--font); }
   .viz-tip {
     position: absolute; display: none; pointer-events: none; z-index: 5;
-    background: #fff; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 9px;
     padding: 8px 10px; font-size: 12px; min-width: 120px;
     box-shadow: 0 4px 14px rgba(0,0,0,.12);
   }
@@ -4048,8 +4066,8 @@ function applyTheme(t) {
   const set = (v, val) => { if (val) root.setProperty(v, val); };
   if (t.primary) {
     set('--green', t.primary);
-    set('--text', t.primary);
     set('--green-dark', darken(t.primary, 0.35));
+    set('--on-primary', contrastText(t.primary));
   }
   set('--accent', t.accent);
   set('--accent-text', contrastText(t.accent));
@@ -4057,6 +4075,47 @@ function applyTheme(t) {
   set('--secondary-text', contrastText(t.secondary));
   set('--bg', t.bg);
   set('--font', t.font);
+
+  // A dark THEME_BG isn't just a different background — white cards on it would
+  // be unreadable, so the whole surface set has to invert with it. We infer
+  // "this is a dark theme" from the background's own brightness rather than
+  // adding a THEME_DARK knob: there is no useful theme with a near-black page
+  // and white cards, so the two are genuinely the same decision, and .env stays
+  // at five variables. Surfaces are derived by mixing the background toward
+  // white, which keeps its hue in every step — a navy theme gets navy-tinted
+  // cards rather than neutral gray.
+  const y = luma(t.bg);
+  if (y !== null && y < 128) {
+    set('--card', lighten(t.bg, 0.07));
+    set('--tint', lighten(t.bg, 0.07));  // soft fills mix toward the card, not white
+    set('--field', lighten(t.bg, 0.14));
+    set('--line', lighten(t.bg, 0.22));
+    set('--text', lighten(t.bg, 0.93));
+    set('--muted', lighten(t.bg, 0.55));
+    // Lift the ink colors off their own hue rather than falling back to the
+    // generic --text, so a link button still reads as the league's color.
+    set('--primary-ink', lighten(t.primary || '#042a2b', 0.45));
+    set('--danger-ink', lighten('#c0392b', 0.35));
+    // The live panel's trick is being the most distinct surface on the page. On
+    // a light theme near-black does that by itself; on a dark theme it collapses
+    // into the background (measured ~1.0:1) and the neon rim ends up carrying
+    // the whole signal alone. So the panel lifts toward its OWN neon here —
+    // which is the one adjustment that serves the rule the fixed --live* values
+    // exist for, instead of breaking it. The neon itself never moves.
+    set('--live-deep', 'color-mix(in srgb, var(--live) 22%, #04191a)');
+  } else if (t.primary) {
+    // Light themes take their ink from the primary color, which is what makes a
+    // rebrand feel deliberate rather than black text under a colored header.
+    set('--text', t.primary);
+  }
+}
+
+// Perceived brightness (YIQ) of a #rrggbb color, 0–255. Null for non-hex input.
+function luma(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return (((n >> 16) & 255) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000;
 }
 
 // Text color for a badge filled with `hex`: white on dark fills, a deep
@@ -4064,25 +4123,30 @@ function applyTheme(t) {
 // look instead of flat black). Non-hex/unset input → null, keeping the
 // stylesheet default. YIQ ≥ 145 counts as "light".
 function contrastText(hex) {
-  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? '').trim());
-  if (!m) return null;
-  const n = parseInt(m[1], 16);
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 145 ? darken(hex, 0.75) : '#ffffff';
+  const y = luma(hex);
+  return y === null ? null : y >= 145 ? darken(hex, 0.75) : '#ffffff';
 }
 
 // Darken a #rrggbb hex color toward black by `amount` (0–1). Used to derive the
 // pressed-button shade from the primary color. Non-hex input is returned as-is.
-function darken(hex, amount) {
+function darken(hex, amount) { return mixTo(hex, amount, 0); }
+
+// Lighten a #rrggbb hex color toward white by `amount` (0–1). Used to derive a
+// dark theme's surfaces from its background, so each step keeps the background's
+// hue instead of falling back to neutral gray.
+function lighten(hex, amount) { return mixTo(hex, amount, 255); }
+
+// Move each channel of a #rrggbb color `amount` (0–1) of the way to `target`.
+// Non-hex input is returned as-is.
+function mixTo(hex, amount, target) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
   if (!m) return hex;
   const n = parseInt(m[1], 16);
-  const f = 1 - amount;
-  const r = Math.round(((n >> 16) & 255) * f);
-  const g = Math.round(((n >> 8) & 255) * f);
-  const b = Math.round((n & 255) * f);
-  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+  const ch = i => {
+    const v = (n >> (i * 8)) & 255;
+    return Math.round(v + (target - v) * amount);
+  };
+  return '#' + [ch(2), ch(1), ch(0)].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
 // Hash-based routing: react to nav clicks (which set location.hash) and to the

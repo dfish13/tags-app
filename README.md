@@ -261,6 +261,13 @@ To stand up a new league (e.g. "Mile Hi Tags"):
      `THEME_BG` / `THEME_FONT` — brand the app with your own colors and font.
      Leave blank to use the default look. Colors are CSS hex; the font is any
      CSS `font-family` (the pressed-button shade is derived from the primary).
+     **A dark `THEME_BG` gives you a dark theme** — there's no separate switch.
+     The app reads the background's brightness and inverts the rest of the
+     surfaces (cards, borders, body text, input fills), deriving each from
+     `THEME_BG` so they keep its hue. Open `theme-preview.html` in a browser to
+     cycle light and dark presets and copy a working set straight into `.env`.
+     Live-round styling stays neon on every theme by design: it signals *state*,
+     not brand, so it has to stay recognizable through a rebrand.
 3. **Start it:**
    ```bash
    docker compose up -d --build
