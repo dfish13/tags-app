@@ -33,6 +33,18 @@
     --blue: #5eb1bf;           /* pacific-blue (CTP) */
     --secondary-text: #042a2b; /* text on secondary fills; applyTheme() re-derives */
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+    /* The "happening right now" signal. Deliberately NOT themeable and not
+       drawn from the league palette: a live round is a STATE — a recording
+       light — and it has to stay unmistakable in a league that rebrands
+       everything else. Neon-ice on near-black inverts the site's light-card
+       look, so live UI reads as a different kind of surface at a glance rather
+       than as one more tinted card. applyTheme() leaves these alone. */
+    --live: #54f2f2;           /* neon-ice, the one palette slot nothing used */
+    --live-deep: #04191a;      /* near-black evergreen: the live surface */
+    --live-ink: #dffdfd;       /* body text on that surface */
+    --live-muted: #8fc4c6;     /* secondary text on that surface */
+    --live-warn: #ffb3a7;      /* --danger is unreadable on near-black */
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   /* Keyboard-visible focus for every interactive element. Secondary color
@@ -345,27 +357,112 @@
   .stats-table td { font-weight: 700; }
   .stats-table td.held { color: var(--muted); font-weight: 400; }
 
-  /* ── Live rounds: join card, status bar, per-row save state ── */
+  /* ── Live rounds ──────────────────────────────────────────
+     Everything a live round owns shares one look: the dark neon "live surface".
+     The rest of the app is dark text on light cards, so inverting it is what
+     makes a live round legible as a different mode rather than a styled card.
+     Applied by toggling .live-surface, so a card can drop back to the ordinary
+     look the moment the round isn't live any more. */
+  .live-surface {
+    background: var(--live-deep);
+    border: 1.5px solid var(--live);
+    color: var(--live-ink);
+    /* Two shadows: a tight neon rim, then a wide soft bloom under it. The bloom
+       is what makes it read as emitting light rather than just being dark. */
+    box-shadow: 0 0 0 1px rgba(84,242,242,.16), 0 8px 26px -12px rgba(84,242,242,.55);
+  }
+  .live-surface h2, .live-surface .name { color: var(--live); }
+  .live-surface .hint, .live-surface .meta, .live-surface label { color: var(--live-muted); }
+  .live-surface .row { border-bottom-color: rgba(84,242,242,.16); }
+  .live-surface .linkbtn { color: var(--live); }
+  /* The primary action on a live surface is the neon itself, filled: it has to
+     out-shout the panel, which is the brightest thing on the page otherwise. */
+  .live-surface button.btn { background: var(--live); color: var(--live-deep); }
+  .live-surface button.btn:active { background: color-mix(in srgb, var(--live) 75%, #000); }
+  .live-surface button.btn.secondary {
+    background: rgba(84,242,242,.10); color: var(--live);
+    border: 1.5px solid rgba(84,242,242,.45);
+  }
+  .live-surface button.btn.secondary:active { background: rgba(84,242,242,.22); }
+  .live-surface input[type=text], .live-surface input[type=number], .live-surface input[type=date] {
+    background: rgba(84,242,242,.07);
+    border-color: rgba(84,242,242,.38);
+    color: var(--live-ink);
+  }
+  .live-surface input:focus { outline-color: var(--live); border-color: var(--live); }
+  .live-surface input::placeholder { color: rgba(143,196,198,.65); }
+
+  /* The pulse. The only motion in the app, so it reads as a signal rather than
+     decoration. --pulse is the ring color as "r,g,b" so a dot sitting ON the
+     neon (inside a pill) can pulse dark instead of invisibly cyan-on-cyan. */
+  .live-dot {
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    background: var(--live); --pulse: 84,242,242;
+    animation: livePulse 2.2s ease-out infinite;
+  }
+  @keyframes livePulse {
+    0%   { box-shadow: 0 0 0 0 rgba(var(--pulse), .8); }
+    70%  { box-shadow: 0 0 0 8px rgba(var(--pulse), 0); }
+    100% { box-shadow: 0 0 0 0 rgba(var(--pulse), 0); }
+  }
+  /* The dot's color and position carry the meaning on their own, so dropping
+     the animation loses nothing. A steady glow stands in for it. */
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot { animation: none; box-shadow: 0 0 5px 1px rgba(84,242,242,.55); }
+  }
+
+  /* LIVE badge for a card title. */
+  .live-pill {
+    display: inline-flex; align-items: center; gap: 6px; vertical-align: 2px;
+    background: var(--live); color: var(--live-deep);
+    font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+    padding: 3px 9px 3px 8px; border-radius: 999px;
+  }
+  .live-pill .live-dot {
+    width: 7px; height: 7px;
+    background: var(--live-deep); --pulse: 4,25,26;
+  }
+  /* Smaller marker for one unfinished round in a list of finished ones. */
+  .live-tag {
+    display: inline-block; vertical-align: 1px;
+    background: var(--live); color: var(--live-deep);
+    font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+    padding: 1px 6px; border-radius: 999px; margin-left: 6px;
+  }
+
+  /* A live round is in progress somewhere in the app. Flagged on <body> so the
+     chrome carries it on every tab, not just the round view — the point being
+     that you can't be in one without knowing it. */
+  body.live header { box-shadow: 0 2px 6px rgba(0,0,0,.15), inset 0 -3px 0 var(--live); }
+  body.live .tabs.subtabs button.active { border-bottom-color: var(--live); }
+  body.live header .sub { color: var(--live); opacity: 1; font-weight: 600; }
+  body.live header .sub .live-dot { display: inline-block; vertical-align: 0; margin-right: 5px; }
+
   .live-bar {
     display: flex; align-items: center; gap: 10px;
-    padding: 10px 12px; margin-bottom: 14px;
-    background: color-mix(in srgb, var(--blue) 18%, #fff);
-    border: 1.5px solid var(--blue); border-radius: 10px;
+    padding: 11px 13px; margin-bottom: 14px; border-radius: 10px;
+    /* Wraps because an admin sees an extra control here (Close check-in) and a
+       narrow phone would otherwise squeeze the title to nothing. */
+    flex-wrap: wrap;
   }
-  /* Wraps because an admin sees an extra control here (Close check-in) and a
-     narrow phone would otherwise squeeze the title to nothing. */
-  .live-bar { flex-wrap: wrap; }
   .live-bar .lb-main { flex: 1; min-width: 0; }
-  .live-bar .lb-title { font-weight: 700; font-size: 14px; }
-  .live-bar .lb-meta { font-size: 12px; color: var(--muted); }
-  .live-bar .lb-meta.warn { color: var(--danger); font-weight: 700; }
+  .live-bar .lb-title {
+    font-weight: 700; font-size: 14px; color: var(--live);
+    display: flex; align-items: center; gap: 7px;
+  }
+  .live-bar .lb-meta { font-size: 12px; color: var(--live-muted); }
+  .live-bar .lb-meta.warn { color: var(--live-warn); font-weight: 700; }
   .live-bar .linkbtn { flex-shrink: 0; }
+
   /* Codes are read aloud in a parking lot and typed one glyph at a time —
      oversized and letter-spaced so a mistype is visible before submitting. */
   .code-in {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 24px; letter-spacing: 5px; text-align: center; text-transform: uppercase;
   }
+  /* input.code-in, not .code-in: it has to out-specify the generic
+     .live-surface input[type=text] colour above, which would otherwise win. */
+  .live-surface input.code-in { color: var(--live); }
   /* The admin's copy of the code. Bigger than .code-in because this one is read
      ALOUD to a group standing around a first tee, often at arm's length in
      sunlight. user-select:all so one tap grabs it for a group chat.
@@ -374,8 +471,12 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 40px; font-weight: 800; letter-spacing: 8px; line-height: 1.2;
     text-align: center; padding: 10px 0 10px 8px; user-select: all;
+    color: var(--live); text-shadow: 0 0 22px rgba(84,242,242,.45);
   }
-  .code-out.none { font-size: 15px; font-weight: 600; letter-spacing: 0; color: var(--muted); }
+  .code-out.none {
+    font-size: 15px; font-weight: 600; letter-spacing: 0;
+    color: var(--live-muted); text-shadow: none;
+  }
   .save-state { font-size: 11px; font-weight: 800; white-space: nowrap; min-width: 52px; text-align: right; }
   .save-state.pending { color: var(--muted); }
   .save-state.saved { color: var(--green); }
@@ -403,7 +504,7 @@
 
 <main>
   <!-- Live-round status strip: only inside the round view, only in live mode -->
-  <div id="liveBar" class="live-bar" style="display:none"></div>
+  <div id="liveBar" class="live-bar live-surface" style="display:none"></div>
 
   <!-- LEAGUE HOME -->
   <section id="view-home" style="display:none">
@@ -473,7 +574,7 @@
     </div>
 
     <!-- Live round past check-in: the add form above is hidden, this explains why -->
-    <div class="card" id="checkinClosedCard" style="display:none">
+    <div class="card live-surface" id="checkinClosedCard" style="display:none">
       <h2>Check-in is closed</h2>
       <p class="hint">This round has moved on to scoring, so the player list and
         incoming tags are locked. An admin can reopen check-in if someone was missed.</p>
@@ -560,7 +661,7 @@
          The form is static markup (not rendered) so a half-typed course name
          survives a re-render; only the code panel below is rebuilt. -->
     <div class="card" id="liveAdminCard" style="display:none">
-      <h2>Live round</h2>
+      <h2 id="liveAdminTitle">Live round</h2>
       <div id="liveOpenForm">
         <p class="hint">Opens a round players join with a code, so everyone enters their own scores without an admin.</p>
         <label for="lrDate">Date</label>
@@ -603,6 +704,15 @@
       <textarea id="importIn" placeholder="Paste exported round text here…"></textarea>
       <button class="btn" id="importBtn" onclick="importRound()">Load round for review</button>
       <div id="importMsg" class="hint" style="display:none"></div>
+    </div>
+
+    <!-- Rounds: fix a date or course, reopen check-in that closed too early,
+         or delete a round. Shown when signed IN. -->
+    <div class="card" id="roundsCard" style="display:none">
+      <h2>Rounds (<span id="roundsCount">0</span>)</h2>
+      <p class="hint">Correct a date or course, reopen check-in on a round that
+        closed too early, or delete one.</p>
+      <div id="adminRoundsList"><div class="empty">Loading…</div></div>
     </div>
 
     <div class="card">
@@ -739,6 +849,7 @@ function router() {
 
   const subs = { home:'League home', round:'Run a round — players, scores, tags', admin:'Admin — manage roster', stats:'Stats — tag history' };
   document.getElementById('phaseSub').textContent = subs[route];
+  applyLiveChrome();  // after the line above: it rewrites the element's content
 
   if (route === 'home') {
     showSection('home');
@@ -1638,18 +1749,22 @@ async function refreshAdminAuth() {
   const addCard = document.getElementById('addCard');
   const importCard = document.getElementById('importCard');
   const liveCard = document.getElementById('liveAdminCard');
+  const roundsCard = document.getElementById('roundsCard');
   if (adminEmail) {
     document.getElementById('adminWho').textContent = adminEmail;
     authCard.style.display = 'none';
     addCard.style.display = '';
     importCard.style.display = '';
     liveCard.style.display = '';
+    roundsCard.style.display = '';
     loadLiveAdmin();
+    loadAdminRounds();
   } else {
     authCard.style.display = '';
     addCard.style.display = 'none';
     importCard.style.display = 'none';
     liveCard.style.display = 'none';
+    roundsCard.style.display = 'none';
   }
 }
 
@@ -1996,13 +2111,18 @@ async function loadLiveRounds() {
   renderLiveCard();
 }
 
+// The LIVE badge, built once — it appears in three card titles and the markup
+// is fiddly enough that three copies would drift.
+const LIVE_PILL = ' <span class="live-pill"><span class="live-dot"></span>live</span>';
+
 function renderLiveCard() {
   const card = document.getElementById('liveCard');
   const title = document.getElementById('liveCardTitle');
   const body = document.getElementById('liveCardBody');
 
   if (isLive()) {
-    title.textContent = 'You’re in a live round';
+    card.classList.add('live-surface');
+    title.innerHTML = 'You’re in a live round' + LIVE_PILL;
     body.innerHTML = `
       <p class="hint">${esc(liveRoundLabel())} · ${liveStatusText()}</p>
       <button class="btn" onclick="location.hash='#/round'">Open the round</button>
@@ -2014,7 +2134,12 @@ function renderLiveCard() {
   // e.g. the round we were in vanished, or a rotated code needs re-entering.
   if (!liveRounds.length && !joinNotice) { card.style.display = 'none'; return; }
 
-  title.textContent = liveRounds.length > 1 ? 'Live rounds' : 'Live round';
+  // A joinable round is happening right now, so the card wears the live look
+  // even before you're in one. With only a joinNotice and no round to join
+  // there's nothing live to advertise, so it falls back to an ordinary card.
+  card.classList.toggle('live-surface', liveRounds.length > 0);
+  title.innerHTML = (liveRounds.length > 1 ? 'Live rounds' : 'Live round') +
+    (liveRounds.length ? LIVE_PILL : '');
   const list = liveRounds.map(r => `
     <div class="row">
       <div style="flex:1">
@@ -2097,7 +2222,7 @@ function renderLiveBar() {
   const n = state.players.length;
   bar.innerHTML = `
     <div class="lb-main">
-      <div class="lb-title">🟢 ${esc(liveRoundLabel())}</div>
+      <div class="lb-title"><span class="live-dot"></span>${esc(liveRoundLabel())}</div>
       <div class="lb-meta ${liveNotice ? 'warn' : ''}">${esc(liveNotice ||
         (liveStatusText() + ' · ' + n + ' player' + (n === 1 ? '' : 's')))}</div>
     </div>
@@ -2156,6 +2281,12 @@ async function readLiveCode(id) {
 function renderLiveAdmin() {
   const form = document.getElementById('liveOpenForm');
   const panel = document.getElementById('liveOpenRound');
+  // Live look only once a round actually exists — while this card is still the
+  // "open one" form it isn't live yet, and its inputs read better on white.
+  const card = document.getElementById('liveAdminCard');
+  card.classList.toggle('live-surface', !!adminRound);
+  document.getElementById('liveAdminTitle').innerHTML =
+    'Live round' + (adminRound ? LIVE_PILL : '');
 
   if (!adminRound) {
     form.style.display = '';
@@ -2668,11 +2799,25 @@ async function ensureAdminChecked() {
   render();
 }
 
+// The only live styling that isn't scoped to a view: while you're in a live
+// round the header carries it on every tab, so you can't be in one without
+// knowing. Called from the router (which rewrites the subtitle) and from
+// renderLiveUi (which runs on every render), so joining and leaving both land.
+function applyLiveChrome() {
+  const live = isLive();
+  document.body.classList.toggle('live', live);
+  const sub = document.getElementById('phaseSub');
+  const dot = sub.querySelector('.live-dot');
+  if (live && !dot) sub.insertAdjacentHTML('afterbegin', '<span class="live-dot"></span>');
+  else if (!live && dot) dot.remove();
+}
+
 // ── Mode-dependent chrome ──
 // Everything that reads differently in a live round. Kept in one place so the
 // local flow's markup and renderers stay exactly as they were.
 function renderLiveUi() {
   const live = isLive();
+  applyLiveChrome();
   const open = live && state.roundStatus === 'open';
   const show = (id, on) => { document.getElementById(id).style.display = on ? '' : 'none'; };
 
@@ -3613,6 +3758,208 @@ async function deleteRosterPlayer(id, name) {
 
 function showRosterEditMsg(id, text, isError) {
   const msg = document.getElementById('edit-msg-' + id);
+  if (!msg) return;
+  msg.textContent = text;
+  msg.style.display = '';
+  msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
+}
+
+// ─── Admin: editing rounds ────────────────────────────────
+// PATCH/DELETE for rounds already existed on the API with no UI in front of
+// them. This is that UI: fix a mistyped date or course, reopen check-in that
+// closed too early (the closed-check-in card has always promised an admin can),
+// and delete a round.
+//
+// Two edits the API allows are deliberately NOT offered here, because both
+// corrupt standings rather than correct them:
+//
+//  - Setting status to "finalized". That flips the flag WITHOUT computing any
+//    tag assignments — POST /admin/rounds/:id/finalize is what does the real
+//    work. A round faked into that state has no assigned tags, so it shows up
+//    in history having redistributed nothing.
+//  - Un-finalizing. Finalizing already moved tag_holders, so reopening a round
+//    leaves it able to redistribute a second time from a pool that's been
+//    spent, silently rewriting who holds what.
+//
+// So the only status move offered is the open ⇄ scoring toggle.
+
+let adminRounds = [];
+let roundEditId = null;   // id of the round whose edit panel is open
+
+function roundStatusLabel(status) {
+  if (status === 'finalized') return 'finalized';
+  if (status === 'scoring') return 'check-in closed · scoring';
+  return 'check-in open';
+}
+
+async function loadAdminRounds() {
+  const el = document.getElementById('adminRoundsList');
+  try {
+    const res = await fetch(API_BASE + '/rounds');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    adminRounds = await res.json();
+    document.getElementById('roundsCount').textContent = adminRounds.length;
+    renderAdminRounds();
+  } catch (e) {
+    el.innerHTML = '<div class="empty">Could not load rounds (' + esc(e.message) + ').</div>';
+  }
+}
+
+function renderAdminRounds() {
+  const el = document.getElementById('adminRoundsList');
+  if (adminRounds.length === 0) {
+    el.innerHTML = '<div class="empty">No rounds yet.</div>';
+    return;
+  }
+  el.innerHTML = adminRounds.map(r => {
+    const label = fmtDate(r.date) + (r.course ? ' · ' + r.course : '');
+    const n = r.playerCount || 0;
+    const meta = roundStatusLabel(r.status) + ' · ' + n + ' player' + (n === 1 ? '' : 's');
+    const live = r.status !== 'finalized';
+
+    if (roundEditId !== r.id) {
+      return `
+      <div class="row">
+        <div style="flex:1">
+          <div class="name">${esc(label)}${live ? ' <span class="live-tag">live</span>' : ''}</div>
+          <div class="meta">${esc(meta)}</div>
+        </div>
+        <button class="linkbtn" onclick="openRoundEdit(${r.id})">Edit</button>
+      </div>`;
+    }
+    return `
+      <div class="row-edit">
+        <div class="row" style="border:none;padding-bottom:4px">
+          <div style="flex:1">
+            <div class="name">${esc(label)}</div>
+            <div class="meta">${esc(meta)}</div>
+          </div>
+        </div>
+        <label for="round-date-${r.id}">Play date</label>
+        <input type="date" id="round-date-${r.id}" value="${esc(r.date)}">
+        <label for="round-course-${r.id}">Course</label>
+        <input type="text" id="round-course-${r.id}" autocomplete="off"
+          value="${esc(r.course || '')}" placeholder="none">
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn" style="margin:0" onclick="saveRoundEdit(${r.id})">Save</button>
+          <button class="btn secondary" style="margin:0" onclick="cancelRoundEdit()">Cancel</button>
+        </div>
+        ${live
+          ? `<button class="btn secondary" onclick="setRoundStatus(${r.id}, '${r.status === 'open' ? 'scoring' : 'open'}')">${
+               r.status === 'open' ? 'Close check-in' : 'Reopen check-in'
+             }</button>`
+          : `<p class="hint">Finalized — the date and course are still editable, but the
+             tag assignments are locked. Finalizing is a one-way step.</p>`}
+        <button class="btn danger" onclick="deleteRound(${r.id})">Delete round</button>
+        <div id="round-msg-${r.id}" class="hint" style="display:none"></div>
+      </div>`;
+  }).join('');
+}
+
+function openRoundEdit(id) { roundEditId = id; renderAdminRounds(); }
+function cancelRoundEdit() { roundEditId = null; renderAdminRounds(); }
+
+async function saveRoundEdit(id) {
+  const round = adminRounds.find(r => r.id === id);
+  if (!round) return;
+  const date = document.getElementById('round-date-' + id).value;
+  const course = document.getElementById('round-course-' + id).value.trim();
+  if (!date) { showRoundMsg(id, 'A play date is required.', true); return; }
+
+  const patch = {};
+  if (date !== round.date) patch.date = date;
+  // '' is meaningful: the server maps a falsy course to null, i.e. clears it.
+  if (course !== (round.course || '')) patch.course = course;
+  if (!Object.keys(patch).length) { roundEditId = null; renderAdminRounds(); return; }
+
+  try {
+    await patchAdmin('/admin/rounds/' + id, patch);
+    roundEditId = null;
+    await afterRoundChange();
+  } catch (e) {
+    if (String(e.message).includes('Failed to fetch')) {
+      showRoundMsg(id, 'Sign-in required — redirecting…', true);
+      setTimeout(adminSignIn, 800);
+    } else {
+      showRoundMsg(id, e.message, true);
+    }
+  }
+}
+
+async function setRoundStatus(id, status) {
+  const reopening = status === 'open';
+  // Both directions change the tag pool, which is why closing check-in was
+  // already a separate step from finalizing.
+  const ask = reopening
+    ? 'Reopen check-in? Anyone with the code can join again — a late arrival ' +
+      'changes the tag pool, and therefore what everyone else can win.'
+    : 'Close check-in? Nobody new can join, but everyone already in can still enter scores.';
+  if (!confirm(ask)) return;
+  try {
+    await patchAdmin('/admin/rounds/' + id, { status });
+    roundEditId = null;
+    await afterRoundChange();
+  } catch (e) {
+    if (String(e.message).includes('Failed to fetch')) {
+      showRoundMsg(id, 'Sign-in required — redirecting…', true);
+      setTimeout(adminSignIn, 800);
+    } else {
+      showRoundMsg(id, e.message, true);
+    }
+  }
+}
+
+async function deleteRound(id) {
+  const round = adminRounds.find(r => r.id === id);
+  if (!round) return;
+  const label = fmtDate(round.date) + (round.course ? ' · ' + round.course : '');
+  const n = round.playerCount || 0;
+  // A finalized round has already moved tag_holders. Deleting it removes the
+  // record but does NOT put the tags back, so standings keep the result of a
+  // round that no longer exists. Say that before, not after.
+  const warning = round.status === 'finalized'
+    ? '\n\nThis round is FINALIZED. Deleting it removes it from history but does ' +
+      'NOT undo the tag assignments it made — standings will keep the result of a ' +
+      'round that no longer exists.'
+    : '\n\nIts ' + n + ' entr' + (n === 1 ? 'y' : 'ies') + ' go with it, and the code stops working.';
+  if (!confirm('Delete the round on ' + label + '?' + warning)) return;
+
+  try {
+    const res = await fetch(API_BASE + '/admin/rounds/' + id, {
+      method: 'DELETE', credentials: 'include'
+    });
+    if (res.status === 401 || res.status === 403) { setTimeout(adminSignIn, 300); return; }
+    if (res.status === 204) {
+      roundEditId = null;
+      // If this device is IN the round it just deleted, get out of live mode
+      // rather than let it poll a 404 and tear itself down mid-render.
+      if (isLive() && state.roundId === id) {
+        leaveLiveRound(true, 'That round was deleted.');
+        return;
+      }
+      await afterRoundChange();
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    showRoundMsg(id, body.error || ('HTTP ' + res.status), true);
+  } catch (e) {
+    showRoundMsg(id, 'Sign-in required — redirecting…', true);
+    setTimeout(adminSignIn, 800);
+  }
+}
+
+// Everything downstream of a round edit. The course typeahead and League Home's
+// history are both derived from GET /rounds, so a date or course change has to
+// reach them or they keep showing the old value until a reload.
+async function afterRoundChange() {
+  await loadAdminRounds();
+  setCoursesFrom(adminRounds);
+  loadLiveAdmin();
+  loadHistory();
+}
+
+function showRoundMsg(id, text, isError) {
+  const msg = document.getElementById('round-msg-' + id);
   if (!msg) return;
   msg.textContent = text;
   msg.style.display = '';
