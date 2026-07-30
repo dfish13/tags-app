@@ -38,6 +38,11 @@
     --panel: color-mix(in srgb, var(--green) 5%, var(--tint));  /* inline edit panel */
     --sel: color-mix(in srgb, var(--danger) 10%, var(--tint));  /* row picked for removal */
 
+    /* Tells the browser which way to render the parts of a control we cannot
+       reach from CSS: the date picker's calendar panel and its icon, number
+       spinners, scrollbars, and the autofill highlight. applyTheme() flips it. */
+    color-scheme: light;
+
     /* The primary and danger colors used as INK — link buttons, soft-button
        labels, focus rings — rather than as a fill. On a light theme they are
        just the colors themselves, so these track any rebrand for free. A dark
@@ -124,19 +129,34 @@
   .card h2 { margin: 0 0 10px; font-size: 16px; }
 
   label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; font-weight: 600; }
-  input[type=text], input[type=number] {
+  /* Every text-entry type, not just text/number: date and search inputs are
+     used too, and anything left out of this list keeps the UA's white fill and
+     black ink, which on a dark theme is a bright hole in the page. `color` has
+     to be stated as well — form controls do NOT inherit it, so leaving it off
+     means black-on-dark no matter what --text says. */
+  input[type=text], input[type=number], input[type=date], input[type=search] {
     width: 100%;
     padding: 12px;
     font-size: 17px;
     border: 1px solid var(--line);
     border-radius: 9px;
     background: var(--field);
+    color: var(--text);
   }
   input:focus { outline: 2px solid var(--primary-ink); border-color: var(--primary-ink); }
+  /* Nudged off --muted toward the ink: --muted is tuned against --card, but a
+     placeholder sits on the lighter --field, where plain muted drops under AA.
+     Some of these carry real information (the join-code format, for one).
+     opacity:1 because Firefox dims placeholders on top of whatever color. */
+  input::placeholder, textarea::placeholder {
+    color: color-mix(in srgb, var(--muted) 78%, var(--text));
+    opacity: 1;
+  }
   textarea {
     width: 100%; min-height: 90px; padding: 12px; font-size: 14px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     border: 1px solid var(--line); border-radius: 9px; background: var(--field);
+    color: var(--text);
     resize: vertical; margin-top: 4px;
   }
   textarea:focus { outline: 2px solid var(--primary-ink); border-color: var(--primary-ink); }
@@ -4085,6 +4105,7 @@ function applyTheme(t) {
   // white, which keeps its hue in every step — a navy theme gets navy-tinted
   // cards rather than neutral gray.
   const y = luma(t.bg);
+  root.setProperty('color-scheme', y !== null && y < 128 ? 'dark' : 'light');
   if (y !== null && y < 128) {
     set('--card', lighten(t.bg, 0.07));
     set('--tint', lighten(t.bg, 0.07));  // soft fills mix toward the card, not white
