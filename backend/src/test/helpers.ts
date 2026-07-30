@@ -45,6 +45,11 @@ export async function stopTestServer() {
 // Wipe everything the tests write, then restore the reference data the app
 // assumes exists (the tag pool and the admin allowlist). RESTART IDENTITY keeps
 // ids small and predictable across cases; CASCADE handles the FK web.
+//
+// Every DB-backed test file shares this one database, so they CANNOT run in
+// parallel — two files reseeding at once collide on tags_number_unique and
+// truncate each other's admin allowlist mid-request. `npm test` passes
+// --test-concurrency=1 for exactly this reason; don't drop it.
 export async function resetDb() {
   await db.execute(
     sql`truncate table ${admins}, ${players}, ${tags}, ${tagHolders}, ${rounds}, ${roundEntries} restart identity cascade`
