@@ -192,7 +192,51 @@ cost.
 
 ## Running locally
 
+### The test stack (one command)
+
+```bash
+scripts/dev.sh up          # then open http://localhost:8123
+```
+
+Everything the app needs to be clicked through, on one port, loaded with the
+same fake data every time:
+
+| | |
+|---|---|
+| **App** | http://localhost:8123 — `index.html` served straight off the working tree, no cache. Edit, reload, see it. |
+| **API** | the same origin under `/api`, exactly as cloudflared path-routes it in production |
+| **Data** | 14 invented players, 3 finalized rounds, and one live round open for check-in |
+| **Join code** | `TAGS99` — fixed, so the check-in flow is one field away |
+| **Admin** | already signed in; the app's own Sign out / Sign in buttons work |
+
+Other commands:
+
+```bash
+scripts/dev.sh reseed   # back to the starting board, server keeps running
+scripts/dev.sh status   # what's up
+scripts/dev.sh down     # stop the server, destroy the database
+scripts/dev.sh up --keep   # restart without reloading the fixture
+```
+
+`up` reloads the fixture every time on purpose: a session always starts from a
+known board, so anything you hit after ten minutes of clicking is reproducible.
+
+Two things production has that a laptop doesn't, both faked in
+`backend/src/dev/server.ts`: the single origin in front of the API and the
+static file, and **Cloudflare Access**. The frontend asks
+`/cdn-cgi/access/get-identity` who you are and hides every admin control if
+nobody answers, so without the stand-in there is no Admin tab to test.
+
+That server hands an admin identity to anyone who asks, and the fixture
+truncates every table — so `src/dev/` is excluded from the build and can't
+reach the image, its database is a container of its own (`tags_dev` on
+`127.0.0.1:55434`, separate from both compose and the test suite), and
+`assertLocalDatabase()` refuses to run against anything but a loopback `*_dev`
+database.
+
 ### Backend + database (Docker)
+
+The production-shaped stack, for checking the containers themselves:
 
 ```bash
 cp .env.example .env      # then edit POSTGRES_PASSWORD to something real
@@ -200,19 +244,10 @@ docker compose up -d --build
 ```
 
 This starts PostgreSQL and the API. On boot the API runs migrations, seeds the
-tag pool (1–300) and admin allowlist, then serves on port 3001.
-
-### Frontend
-
-The frontend is a single static file. Serve it any way you like, e.g.:
-
-```bash
-python3 -m http.server 8080
-```
-
-Then open `http://localhost:8080`. The page calls the API at same-origin `/api`
-in production; for local dev you'll want the static server and the API behind
-one origin (e.g. a reverse proxy), or adjust `API_BASE` in `index.html`.
+tag pool (1–300) and admin allowlist, then serves on port 3001. The frontend is
+a single static file — serve it with `python3 -m http.server 8080` — but note
+that the page calls same-origin `/api`, so on their own ports the two halves
+don't talk. Use the test stack above for that.
 
 ### Backend development (without Docker)
 
@@ -223,6 +258,7 @@ npm run dev            # tsx watch
 npm run db:generate    # generate a migration from schema changes
 npm run db:migrate     # apply migrations
 npm run db:seed        # seed tags + admin
+npm run db:seed:dev    # load the test-stack fixture (dev database only)
 
 npm run typecheck      # no output = clean
 npm run test:db        # throwaway Postgres on 127.0.0.1:55433 + migrate + suite
@@ -234,7 +270,13 @@ Set `DATABASE_URL` in the environment (see `.env.example`).
 ⚠️ The suite's `resetDb()` truncates **every table in whatever `DATABASE_URL`
 points at**. `npm run test:db` aims it at its own throwaway container on an
 odd port for that reason — never point the suite at a dev or production
-database.
+database. Three databases, deliberately kept apart:
+
+| Port | Database | Owned by | Survives? |
+|---|---|---|---|
+| 5432 | `tags` | `docker compose` — the real one | yes, on a volume |
+| 55433 | `tags_test` | `npm run test:db` | destroyed by `test:db:down` |
+| 55434 | `tags_dev` | `scripts/dev.sh` | destroyed by `dev.sh down` |
 
 ## Running your own league
 

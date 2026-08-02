@@ -14,7 +14,9 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  // Tests are excluded from the BUILD so they never ship in the container
-  // image. `npm run typecheck` uses tsconfig.test.json, which includes them.
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/test"]
+  // Tests and the local dev stack are excluded from the BUILD so they never
+  // ship in the container image — src/dev/ forges an admin identity and wipes
+  // the database, and neither belongs anywhere near production.
+  // `npm run typecheck` uses tsconfig.test.json, which includes them.
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/test", "src/dev"]
 }
