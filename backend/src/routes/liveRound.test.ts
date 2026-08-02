@@ -88,7 +88,7 @@ describe("the code gate", () => {
   test("rejects a wrong code", async () => {
     const round = await openRound();
     const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
-      code: "ZZZZZZ",
+      code: "ZZZZ",
       body: { playerId: 1, tagNumber: 5 },
       ip: freshIp(),
     });
@@ -201,7 +201,7 @@ describe("the code gate", () => {
     let sawBlock = false;
     for (let i = 0; i < 12; i++) {
       const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
-        code: "ZZZZZZ",
+        code: "ZZZZ",
         body: { playerId: 1, tagNumber: 5 },
         ip,
       });
@@ -227,7 +227,7 @@ describe("the code gate", () => {
     let sawBlock = false;
     for (let i = 0; i < 12; i++) {
       const res = await api("POST", "/api/rounds/join", {
-        body: { code: "ZZZZZZ" },
+        body: { code: "ZZZZ" },
         ip,
       });
       if (res.status === 429) {

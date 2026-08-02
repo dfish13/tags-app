@@ -887,11 +887,30 @@
 
   <!-- ADMIN -->
   <section id="view-admin" style="display:none">
-    <!-- Auth status: shown when signed OUT -->
+    <!-- Asking Access who we are is a network round-trip, and every card below
+         starts hidden, so without this the page is blank while it runs. Only
+         on the first check — after that we already know the answer. -->
+    <div class="card" id="adminCheckingCard">
+      <p class="hint">Checking sign-in…</p>
+    </div>
+
+    <!-- Auth status: shown when signed OUT. Signed out, this is the whole page
+         — the roster below used to show through, but a read-only list of names
+         is not why anyone opens Admin, and it buried the one button that is. -->
     <div class="card" id="authCard" style="display:none">
       <h2>Admin sign-in</h2>
-      <p class="hint">Editing the roster requires admin access. Sign in to continue — everyone can still view the roster below without signing in.</p>
+      <p class="hint">Opening live rounds and managing the roster need admin access. Standings and round history stay on Home without signing in.</p>
       <button class="btn" id="signInBtn" onclick="adminSignIn()">Sign in as admin</button>
+    </div>
+
+    <!-- ...and the same card's other face, shown when signed IN. Auth owns one
+         place in both directions: sign-out used to ride in the corner of the
+         add-player form's heading, which made it look like part of that form
+         and put it nowhere near the question it answers. -->
+    <div class="card" id="sessionCard" style="display:none">
+      <h2>Signed in</h2>
+      <p class="hint">Signed in as <span id="adminWho">…</span>.</p>
+      <button class="btn secondary" onclick="adminSignOut()">Sign out</button>
     </div>
 
     <!-- Live round: open one, read out the code, run it. Shown when signed IN.
@@ -920,11 +939,8 @@
 
     <!-- Add form: shown when signed IN -->
     <div class="card" id="addCard" style="display:none">
-      <h2 style="display:flex;align-items:center;justify-content:space-between">
-        <span>Add player to roster</span>
-        <button class="linkbtn" onclick="adminSignOut()">Sign out</button>
-      </h2>
-      <p class="hint">Signed in as <span id="adminWho">…</span>. Adds a player to the permanent league roster.</p>
+      <h2>Add player to roster</h2>
+      <p class="hint">Adds a player to the permanent league roster.</p>
       <label for="aName">Name</label>
       <input type="text" id="aName" autocomplete="off" placeholder="Player name">
       <label for="aTag">Tag number (1–300)</label>
@@ -952,7 +968,7 @@
       <div id="adminRoundsList"><div class="empty">Loading…</div></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="rosterCard" style="display:none">
       <h2>Roster (<span id="rosterCount">0</span>)</h2>
       <input type="search" id="rosterSearch" autocomplete="off" placeholder="Search roster…" aria-label="Search roster" oninput="renderRoster(roster)">
       <div id="rosterList"><div class="empty">Loading…</div></div>
@@ -1157,6 +1173,18 @@ document.addEventListener('keydown', (e) => {
 let route = 'home';    // 'home' | 'round' | 'join' | 'admin' | 'stats'
 let step = 'setup';    // active round step when route === 'round'
 
+// A code carried in the link — '#/join/ABCD'. An admin shares that URL instead
+// of reading four letters across a car park, and the player arrives with the
+// answer already filled in. The code stays in the *fragment*, never the query
+// string: fragments aren't sent to the server, so it stays out of access logs
+// and Referer headers the same way the header-vs-query rule keeps it out on
+// the API side.
+let pendingJoinCode = null;
+// One auto-join attempt per code, ever. A rejected code must never be retried
+// in a loop: the limiter counts failures per IP, so a loop spends the budget
+// the whole group shares and locks everyone out of the round.
+let autoJoinTried = false;
+
 const STEPS = ['setup', 'scores'];
 const ALL_SECTIONS = ['home','choose','setup','scores','admin','stats'];
 
@@ -1170,7 +1198,19 @@ function showSection(id) {
 function router() {
   const h = location.hash || '#/';
   if (h.startsWith('#/round')) route = 'round';
-  else if (h.startsWith('#/join')) route = 'join';
+  else if (h.startsWith('#/join')) {
+    route = 'join';
+    // '#/join/ABCD' → prefill ABCD. Normalized here so a mangled link (a chat
+    // app that lowercased it, a trailing full stop) still resolves, and so
+    // anything that can't be a code is dropped rather than typed into the box.
+    const carried = normalizeCode(h.slice('#/join'.length).replace(/^\//, ''));
+    if (carried !== pendingJoinCode) {
+      // Null for a bare '#/join', which is how the box ends up empty for
+      // someone who came to type a code rather than to follow a link.
+      pendingJoinCode = carried;
+      autoJoinTried = false;  // a different code deserves its own one attempt
+    }
+  }
   else if (h.startsWith('#/admin')) route = 'admin';
   else if (h.startsWith('#/stats')) route = 'stats';
   else route = 'home';
@@ -1217,6 +1257,7 @@ function router() {
     document.getElementById('startRoundCard').style.display = hasRound() ? 'none' : '';
     renderJoinCard();
     loadLiveRounds();
+    maybeAutoJoin();
   } else {
     // round: show the active step, and make the hash name it. replaceState
     // rather than a hash assignment — rewriting '#/round' to '#/round/setup'
@@ -2253,29 +2294,26 @@ async function fetchAdminIdentity() {
 
 // Refresh the Admin view's auth UI: show the sign-in card or the add form.
 async function refreshAdminAuth() {
+  const checking = document.getElementById('adminCheckingCard');
+  // Only the first check is a blank page — later ones already have the last
+  // answer painted, and flashing this over it would be a step backwards.
+  checking.style.display = adminChecked ? 'none' : '';
   adminEmail = await fetchAdminIdentity();
   adminChecked = true;
+  checking.style.display = 'none';
   renderDrawerAdmin();
-  const authCard = document.getElementById('authCard');
-  const addCard = document.getElementById('addCard');
-  const importCard = document.getElementById('importCard');
-  const liveCard = document.getElementById('liveAdminCard');
-  const roundsCard = document.getElementById('roundsCard');
+  // Everything on this page except the sign-in card is admin-only, so they all
+  // move together. Listed rather than folded into one container because their
+  // order on the page is deliberate and a wrapper would fight the card spacing.
+  const signedIn = ['sessionCard', 'liveAdminCard', 'addCard', 'importCard', 'roundsCard', 'rosterCard'];
+  document.getElementById('authCard').style.display = adminEmail ? 'none' : '';
+  for (const id of signedIn) {
+    document.getElementById(id).style.display = adminEmail ? '' : 'none';
+  }
   if (adminEmail) {
     document.getElementById('adminWho').textContent = adminEmail;
-    authCard.style.display = 'none';
-    addCard.style.display = '';
-    importCard.style.display = '';
-    liveCard.style.display = '';
-    roundsCard.style.display = '';
     loadLiveAdmin();
     loadAdminRounds();
-  } else {
-    authCard.style.display = '';
-    addCard.style.display = 'none';
-    importCard.style.display = 'none';
-    liveCard.style.display = 'none';
-    roundsCard.style.display = 'none';
   }
 }
 
@@ -2415,11 +2453,13 @@ function showFinalizeMsg(text, isError) {
 const LOCAL_BACKUP_KEY = 'tags-round-local-v1';
 const LIVE_POLL_MS = 15000;
 
-// Mirrors the server's alphabet (no 0 O 1 I L — codes get read aloud in a
-// parking lot). Normalizing here means an obvious typo is rejected without
-// spending one of the IP's ten wrong-code attempts.
-const CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const CODE_LENGTH = 6;
+// Mirrors the server's alphabet and length — keep in step with
+// backend/src/lib/roundCode.ts. Letters only, no O I L: codes get read aloud in
+// a parking lot, and dropping digits removes the "letter or number?" pause.
+// Normalizing here means an obvious typo is rejected without spending one of
+// the IP's ten wrong-code attempts.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+const CODE_LENGTH = 4;
 
 function normalizeCode(input) {
   const cleaned = String(input || '').toUpperCase().replace(/[\s-]/g, '');
@@ -2617,6 +2657,12 @@ function leaveLiveRound(silent, notice) {
 // ── Home: the live-round card ──
 
 let liveRounds = [];
+// Whether we've actually asked the server yet, because an empty `liveRounds`
+// otherwise means two different things — "nothing is live" and "haven't
+// looked" — and the join card says something different for each. 'error' is
+// its own state rather than folded into 'ok': claiming nothing is live when
+// the request failed is a lie, and this app gets used where the signal is bad.
+let liveRoundsState = 'loading';  // 'loading' | 'ok' | 'error'
 // Why the player is looking at the join card ("that code no longer works").
 // Sticky rather than consumed on display: leaving a round renders the card
 // once directly and again from the hashchange, and a one-shot message would
@@ -2626,9 +2672,13 @@ let joinNotice = null;
 async function loadLiveRounds() {
   try {
     const res = await fetch(API_BASE + '/rounds/live');
-    if (!res.ok) return;
-    liveRounds = await res.json();
-  } catch (e) { /* offline — card falls back to whatever we last knew */ }
+    liveRoundsState = res.ok ? 'ok' : 'error';
+    if (res.ok) liveRounds = await res.json();
+  } catch (e) {
+    // Offline — the card falls back to whatever we last knew, and says so
+    // rather than reporting an empty list as "no live round".
+    liveRoundsState = 'error';
+  }
   // Both cards read `liveRounds`, and either can be on screen when this
   // resolves. Repaint whichever is actually showing.
   if (route === 'home') renderLiveCard();
@@ -2691,8 +2741,36 @@ function renderJoinCard() {
   const title = document.getElementById('joinCardTitle');
   const body = document.getElementById('joinCardBody');
 
-  // The live look only when there is actually something live to join; with no
-  // open round this is just a code box waiting for one.
+  // On the chooser, a code box with nothing to join is furniture: it asks for
+  // a code that cannot exist, and failing to produce one looks like the
+  // player's fault. So the form only appears when there's a round to join —
+  // except on #/join, where asking for the code box IS the navigation, and
+  // which stays reachable below. That escape hatch is the whole reason this
+  // doesn't just hide the card: someone at a course with no signal can't load
+  // the live list, and must still be able to type a code they were read.
+  if (route !== 'join' && !liveRounds.length) {
+    card.classList.remove('live-surface');
+    title.textContent = 'Join a live round';
+    const said = liveRoundsState === 'loading' ? 'Checking for a live round…'
+      : liveRoundsState === 'error' ? 'Couldn’t check for a live round — you may be offline.'
+      : 'No live round right now. One appears here when an admin opens it.';
+    body.innerHTML =
+      `<p class="hint">${esc(said)}</p>` +
+      (joinNotice ? `<p class="hint" style="color:var(--danger)">${esc(joinNotice)}</p>` : '') +
+      (liveRoundsState === 'loading' ? '' :
+        `<button class="linkbtn" onclick="location.hash='#/join'">Have a code? Enter it anyway</button>`);
+    card.style.display = '';
+    return;
+  }
+
+  // Whatever is in the box already wins over the link's code: this card is
+  // rebuilt when loadLiveRounds() resolves, and that must not wipe a code
+  // someone is part-way through typing (or has just corrected after a miss).
+  const box = document.getElementById('joinCode');
+  const codeValue = box ? box.value : (pendingJoinCode || '');
+
+  // The live look only when there is actually something live to join; on
+  // #/join with nothing open this is just a code box waiting for one.
   card.classList.toggle('live-surface', liveRounds.length > 0);
   title.innerHTML = 'Join a live round' + (liveRounds.length ? LIVE_PILL : '');
   const list = liveRounds.map(r => `
@@ -2705,8 +2783,9 @@ function renderJoinCard() {
   body.innerHTML = list + `
     <label for="joinCode">Join code</label>
     <input type="text" id="joinCode" class="code-in" autocomplete="off"
-      autocapitalize="characters" spellcheck="false" maxlength="8"
-      placeholder="ABC234" aria-label="Round join code"
+      autocapitalize="characters" spellcheck="false" maxlength="6"
+      placeholder="ABCD" aria-label="Round join code"
+      value="${esc(codeValue)}"
       onkeydown="onJoinCodeKey(event)">
     <p class="hint">Whoever opened the round has the code. Everyone in the group can use the same one.</p>
     ${hasRound() && !isLive()
@@ -2715,6 +2794,19 @@ function renderJoinCard() {
     <button class="btn" id="joinBtn" onclick="joinLiveRound()">Join round</button>
     <div id="joinMsg" class="hint" style="display:none"></div>`;
   if (joinNotice) showJoinMsg(joinNotice, true);
+}
+
+// Arriving by a link with the code in it means the player has already been
+// handed the answer, so making them press Join is a step for nothing.
+function maybeAutoJoin() {
+  if (!pendingJoinCode || autoJoinTried) return;
+  // ...unless there's a round on this phone. Joining stashes it (it comes back
+  // on leave), but swapping out what someone is part-way through, unasked and
+  // because they tapped a link, is not a thing to do silently. Prefilled and
+  // waiting for the button is the right amount of friction here.
+  if (hasRound()) return;
+  autoJoinTried = true;
+  joinLiveRound();
 }
 
 function onJoinCodeKey(e) {
@@ -2734,7 +2826,7 @@ async function joinLiveRound() {
   const btn = document.getElementById('joinBtn');
   const code = normalizeCode(input ? input.value : '');
   joinNotice = null; // they're acting on it now
-  if (!code) { showJoinMsg('A code is 6 letters and numbers, like ABC234.', true); return; }
+  if (!code) { showJoinMsg('A code is 4 letters, like ABCD.', true); return; }
 
   btn.disabled = true;
   showJoinMsg('Joining…', false);
@@ -2871,11 +2963,44 @@ function renderLiveAdmin() {
       ? esc(code)
       : 'No code — nobody can join or save a score until you issue one.'}</div>
     ${code ? `<p class="hint" style="text-align:center">${esc(codeExpiryText())}</p>` : ''}
+    ${code ? '<button class="btn secondary" onclick="shareJoinLink()">Share join link</button>' : ''}
     <button class="btn" onclick="joinOwnRound()">Open this round</button>
     ${open ? '<button class="btn secondary" onclick="closeCheckin()">Close check-in</button>' : ''}
     <button class="linkbtn" onclick="rotateLiveCode()">${code ? 'New code' : 'Issue a code'}</button>
     ${code ? '<button class="linkbtn" onclick="revokeLiveCode()">Revoke code</button>' : ''}
     ${n === 0 ? '<button class="linkbtn" onclick="discardLiveRound()">Discard round</button>' : ''}`;
+}
+
+// The code as a link, for the group chat. The code is still read aloud at the
+// tee — this is the path for whoever isn't standing there yet.
+function joinLinkFor(code) {
+  return SITE_ORIGIN + '/#/join/' + code;
+}
+
+// Hand the link to the OS share sheet where there is one (that's the phone
+// case, and it reaches the group chat in one tap); fall back to the clipboard
+// on a desktop browser. A share the user cancels is not an error, so an
+// AbortError says nothing rather than claiming something failed.
+async function shareJoinLink() {
+  const code = adminCode && adminCode.joinCode;
+  if (!code) return;
+  const url = joinLinkFor(code);
+  const where = adminRound && adminRound.course ? adminRound.course : 'the round';
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Join ' + where, text: 'Join ' + where + ' — code ' + code, url });
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      // Anything else (no permission, unsupported target) falls through to copy.
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showLiveAdminMsg('Join link copied — paste it in the group chat.', false);
+  } catch (e) {
+    showLiveAdminMsg('Couldn’t copy. The link is ' + url, true);
+  }
 }
 
 function codeExpiryText() {

@@ -111,12 +111,16 @@ and still be entering scores into the same round.
 **Running one** (Admin view, signed in):
 
 1. **Open a live round** — pick the date and course. The app mints a
-   six-character join code and shows it large, because it gets read aloud on a
-   first tee. The alphabet omits `0 O 1 I L`, which are the glyphs people
-   mishear.
-2. **Read the code out.** Players open the round view and type it. They check
-   themselves in — picking their name from the roster autofills the tag they
-   currently hold — and enter their own scores as they play.
+   four-letter join code and shows it large, because it gets read aloud on a
+   first tee. Letters only, and no `O I L` — digits and those glyphs are what
+   people mishear or have to spell out.
+2. **Read the code out**, or **Share join link** for anyone not standing there.
+   The link is `…/#/join/ABCD`, and a player who opens it with no round of
+   their own on the phone goes straight in without typing anything. The code
+   rides in the URL fragment, so it never reaches a server log.
+   Either way players check themselves in — picking their name from the roster
+   autofills the tag they currently hold — and enter their own scores as they
+   play.
 3. **Close check-in** once everyone is in. Scores keep saving; nobody new can
    join. This is a separate step from finalizing because a late check-in
    changes the tag pool, and therefore what everyone else can win.
@@ -255,7 +259,7 @@ same fake data every time:
 | **App** | http://localhost:8123 — `index.html` served straight off the working tree, no cache. Edit, reload, see it. |
 | **API** | the same origin under `/api`, exactly as cloudflared path-routes it in production |
 | **Data** | 14 invented players, 3 finalized rounds, and one live round open for check-in |
-| **Join code** | `TAGS99` — fixed, so the check-in flow is one field away |
+| **Join code** | `TAGS` — fixed, so the check-in flow is one field away |
 | **Admin** | already signed in; the app's own Sign out / Sign in buttons work |
 
 Other commands:
