@@ -53,25 +53,74 @@ reaches only the entries of one round, and only while that round is open.
 | `round_entries` | One row per player per round (incoming tag, score, assigned tag) |
 | `admins` | Email allowlist for write access |
 
+## The round view
+
+There is only ever **one round in progress**, and it is either on this phone or
+on the server — `state.mode` is `none`, `local` or `live`, and entering a live
+round stashes any local one and restores it on the way out. The round view shows
+whichever you're in, and the drawer entry names it: *Start a round*, *This
+round*, or *Live round*.
+
+`none` is the state the app starts in. Before it existed, an empty local round
+stood in for "no round", so opening the round view silently started one and both
+ways into a round lived on different pages — joining on Home, starting under the
+round view. With a real empty state the view can ask the question instead: join
+a live round with a code, or start one on this phone. Home still advertises that
+a live round is happening, but its **Join** button goes to the code box rather
+than hosting one.
+
+That code box is also its own route, `#/join`. It has to be: once a local round
+is in progress the round view *is* that round, so without a separate route there
+is nowhere for Home's Join button to go. On `#/join` the "start a round on this
+phone" half is hidden — you already have one — and the card says the local round
+is kept and comes back when you leave the live one.
+
+### Two steps, not three
+
+A round is a wizard with two steps, each its own route: `#/round/setup` (who's
+playing, and with which tags) and `#/round/scores`. There is no tab strip — you
+go forward with the button that ends the setup step and back with the link at
+the top of the scores step. The step is in the hash so Back walks the wizard
+instead of leaving the round, and a reload lands where you were.
+
+There used to be a third step, Results, listing the same players again with the
+tags they'd won. Now the tag is a **column on the row you type the score into**,
+so the consequence of a score shows up where you enter it — and the round has as
+many steps as a live one actually has states on the server (`open`, then
+`scoring`; `finalized` is a readout, not a step you work in).
+
+The scores list has two orders, because it does two jobs:
+
+- **A–Z** while entering. Entering scores is a lookup — you have a name in front
+  of you and need its row — and it is the only order safe to type into, since a
+  name doesn't move when a score lands.
+- **Tag order** for reading the result out at the end: worst score first,
+  counting down to whoever takes tag #1. A finalized round is locked to this
+  order, because nothing is left to type.
+
+A player with no score yet shows a dashed `—` instead of a tag. They do get one
+(the highest, as the hint under the list says), but printing a confident number
+beside an empty field answers a question nobody has asked yet.
+
 ## Live rounds
 
 Normally one person runs a round on one phone. A live round instead puts the
 round on the server and lets everyone write to it, so a group can spread out
 and still be entering scores into the same round.
 
-**Running one** (Admin tab, signed in):
+**Running one** (Admin view, signed in):
 
 1. **Open a live round** — pick the date and course. The app mints a
    six-character join code and shows it large, because it gets read aloud on a
    first tee. The alphabet omits `0 O 1 I L`, which are the glyphs people
    mishear.
-2. **Read the code out.** Players go to Home, tap **Join**, and type it. They
-   check themselves in — picking their name from the roster autofills the tag
-   they currently hold — and enter their own scores as they play.
+2. **Read the code out.** Players open the round view and type it. They check
+   themselves in — picking their name from the roster autofills the tag they
+   currently hold — and enter their own scores as they play.
 3. **Close check-in** once everyone is in. Scores keep saving; nobody new can
    join. This is a separate step from finalizing because a late check-in
    changes the tag pool, and therefore what everyone else can win.
-4. **Finalize** from the Results step, as usual. Tags are redistributed and the
+4. **Finalize** from the scores step, as usual. Tags are redistributed and the
    code stops working.
 
 **New code** reissues the code and kills the old one — for when it has been
@@ -107,7 +156,7 @@ with the round, so an unsent score never follows you into a different one.
 ## Adding a player who isn't on the roster
 
 Only roster players can be put in a round, which used to mean stopping
-mid-setup, going to the Admin tab, adding them, and coming back. Now typing a
+mid-setup, going to the Admin view, adding them, and coming back. Now typing a
 name with no exact roster match opens a resolver in place.
 
 It lists **every roster player who might already be them**, each with the
@@ -135,7 +184,7 @@ right spelling — but are told to ask an admin rather than offered the create
 option. `POST /api/admin/players` is Access-gated regardless.
 
 The hint under the name field says which of those two you are looking at, so a
-signed-in admin isn't told to go to the Admin tab for something they can do
+signed-in admin isn't told to go to the Admin view for something they can do
 right there.
 
 ## Bringing a tag the app thinks someone else has
@@ -160,7 +209,7 @@ They differ in *when* the old holder loses it:
   That is an **admin** write, and it matches what `PATCH /api/admin/players/:id/tag`
   has always done. It needs `takeTag: true`, which the app sends only after the
   admin has been shown the holder's name and agreed — so a mistyped number in the
-  Admin tab's roster form still bounces with a plain `409`.
+  Admin view's roster form still bounces with a plain `409`.
 
 The `409` carries a structured `heldBy` alongside the message, which is what
 lets the check-in flow offer "reissue it anyway" instead of dead-ending an admin
@@ -225,7 +274,7 @@ Two things production has that a laptop doesn't, both faked in
 `backend/src/dev/server.ts`: the single origin in front of the API and the
 static file, and **Cloudflare Access**. The frontend asks
 `/cdn-cgi/access/get-identity` who you are and hides every admin control if
-nobody answers, so without the stand-in there is no Admin tab to test.
+nobody answers, so without the stand-in there is no Admin view to test.
 
 That server hands an admin identity to anyone who asks, and the fixture
 truncates every table — so `src/dev/` is excluded from the build and can't

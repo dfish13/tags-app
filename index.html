@@ -93,29 +93,122 @@
     top: 0;
     z-index: 10;
     box-shadow: 0 2px 6px rgba(0,0,0,.15);
-  }
-  header h1 { margin: 0; font-size: 19px; font-weight: 700; }
-  header .sub { font-size: 13px; opacity: .85; margin-top: 2px; }
-
-  .tabs {
+    /* The menu button sits beside the title block rather than above it: the
+       header is the only row of chrome now, so it has to stay one row tall. */
     display: flex;
-    background: var(--green-dark);
+    align-items: center;
+    gap: 14px;
   }
-  .tabs button {
-    flex: 1;
-    background: none;
-    border: none;
-    color: color-mix(in srgb, var(--on-primary) 60%, transparent);
-    padding: 11px 4px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    border-bottom: 3px solid transparent;
+  header .head-main { min-width: 0; }
+  header h1 { margin: 0; font-size: 19px; font-weight: 700; }
+  header .sub {
+    font-size: 13px; opacity: .85; margin-top: 2px;
+    display: flex; align-items: center; gap: 6px;
   }
-  .tabs button.active { color: var(--on-primary); border-bottom-color: var(--accent); }
-  .tabs button:disabled { opacity: .35; }
-  .tabs.subtabs { background: var(--green); }
-  .tabs.subtabs button { font-size: 12px; padding: 9px 4px; }
+  /* The view name is the ONLY wayfinding once the tabs are gone, so it never
+     shrinks; the live note beside it is what gives way on a narrow phone. */
+  header .sub .phase { flex-shrink: 0; }
+  header .sub .head-live { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Hamburger. Drawn from borders rather than ☰ or an icon font: the glyph
+     renders at wildly different weights across platforms, and this one can
+     carry the live dot (below) without a second element. */
+  .menu-btn {
+    flex-shrink: 0;
+    background: none; border: none; padding: 6px; margin: -6px 0 -6px -6px;
+    color: inherit; cursor: pointer; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px;
+  }
+  .menu-btn .ham {
+    position: relative; display: block;
+    width: 20px; height: 2px; background: currentColor; border-radius: 2px;
+  }
+  .menu-btn .ham::before, .menu-btn .ham::after {
+    content: ''; position: absolute; left: 0;
+    width: 20px; height: 2px; background: currentColor; border-radius: 2px;
+  }
+  .menu-btn .ham::before { top: -6px; }
+  .menu-btn .ham::after { top: 6px; }
+
+  .scrim {
+    position: fixed; inset: 0; z-index: 20;
+    background: rgba(0,0,0,.45);
+    opacity: 0; visibility: hidden;
+    transition: opacity .18s ease, visibility .18s ease;
+  }
+  .drawer {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 21;
+    width: min(78vw, 290px);
+    background: var(--card);
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    /* visibility, not just the transform: translated off-screen it would still
+       be focusable and still read by a screen reader, so Tab would walk through
+       an invisible menu. Transitioning INTO visible applies at the start of the
+       transition, so the slide-in is still animated. */
+    visibility: hidden;
+    transition: transform .2s ease, visibility .2s ease;
+  }
+  body.drawer-open .scrim { opacity: 1; visibility: visible; }
+  body.drawer-open .drawer { transform: none; visibility: visible; }
+  body.drawer-open { overflow: hidden; }
+  @media (prefers-reduced-motion: reduce) {
+    .scrim, .drawer { transition: none; }
+  }
+
+  .drawer-head {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--green); color: var(--on-primary);
+    padding: 14px 8px 14px 16px;
+  }
+  .drawer-head .dh-title { font-size: 17px; font-weight: 700; }
+  .drawer-x {
+    background: none; border: none; color: inherit; cursor: pointer;
+    font-size: 26px; line-height: 1; padding: 4px 12px;
+  }
+  .drawer-nav { padding: 8px; }
+  .drawer-item {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; border-radius: 9px;
+    padding: 13px 12px; margin-bottom: 2px;
+    font: inherit; font-size: 16px; font-weight: 600;
+    color: var(--text); cursor: pointer;
+  }
+  .drawer-item.active {
+    background: color-mix(in srgb, var(--primary-ink) 12%, transparent);
+    color: var(--primary-ink);
+  }
+  /* Admin is deliberately not a peer of the three above: below a rule, at the
+     bottom, smaller and muted. Still reachable — a new admin has to be able to
+     find the sign-in — but nothing about it invites a player to tap it. */
+  .drawer-foot {
+    margin-top: auto;
+    border-top: 1px solid var(--line);
+    padding: 8px;
+  }
+  .drawer-admin {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; border-radius: 9px;
+    padding: 9px 12px;
+    font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--muted); cursor: pointer;
+  }
+  .drawer-admin.active { color: var(--primary-ink); }
+  .drawer-who {
+    font-size: 11px; color: var(--muted);
+    padding: 0 12px 6px; word-break: break-all;
+  }
+
+  /* Back out of scoring, to the players. The round is a two-step wizard, so
+     this is the only way back — there is no tab strip to click. */
+  .step-back {
+    background: none; border: none; color: var(--primary-ink);
+    font-size: 14px; font-weight: 700; cursor: pointer;
+    padding: 2px 0 10px;
+  }
 
   main { padding: 16px; max-width: 640px; margin: 0 auto; }
 
@@ -316,12 +409,35 @@
     background: var(--accent); color: var(--accent-text);
     border-radius: 4px; padding: 1px 5px; vertical-align: middle;
   }
-  .result-row .tag-out {
+  /* The tag you leave with. Sits where the incoming tag sits on the check-in
+     list, in the accent colour rather than the green, because on the scores
+     page this is the number everyone is waiting for. */
+  .tag-out {
     min-width: 50px; height: 44px;
     display:flex;align-items:center;justify-content:center;
     background: var(--accent); color: var(--accent-text);
     border-radius: 9px; font-weight: 800; font-size: 18px;
+    flex-shrink: 0;
   }
+  /* No score yet, so no tag yet. Dashed and hollow, matching the empty score
+     field beside it — the two fill in together as the card comes in. */
+  .tag-out.pending {
+    background: transparent; color: var(--muted);
+    border: 1px dashed var(--line); font-weight: 700;
+  }
+
+  /* Which order the scores list is in. Two orders because the page does two
+     jobs: typing scores in (find a name) and reading the result out (tag
+     order). Neither can be the other's default. */
+  .order-toggle { display: flex; gap: 0; margin: 8px 0 2px; }
+  .order-toggle button {
+    flex: 1; background: var(--field); color: var(--muted);
+    border: 1px solid var(--line); padding: 7px 6px;
+    font-size: 12px; font-weight: 700; cursor: pointer;
+  }
+  .order-toggle button:first-child { border-radius: 8px 0 0 8px; }
+  .order-toggle button:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+  .order-toggle button.on { background: var(--primary-ink); color: var(--on-primary); border-color: var(--primary-ink); }
 
   /* ── Stats page: player chips + tag-history chart ── */
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -488,9 +604,30 @@
      chrome carries it on every tab, not just the round view — the point being
      that you can't be in one without knowing it. */
   body.live header { box-shadow: 0 2px 6px rgba(0,0,0,.15), inset 0 -3px 0 var(--live); }
-  body.live .tabs.subtabs button.active { border-bottom-color: var(--live); }
-  body.live header .sub { color: var(--live); opacity: 1; font-weight: 600; }
+  body.live header .sub .head-live { color: var(--live); opacity: 1; font-weight: 600; }
   body.live header .sub .live-dot { display: inline-block; vertical-align: 0; margin-right: 5px; }
+  /* With the tabs gone the menu button is the only chrome on three of the four
+     views, so it — not just the header rule — has to say a round is running.
+     Ringed in the header green so the dot reads as a badge at any size. */
+  body.live .menu-btn::after {
+    content: ''; position: absolute; top: 2px; right: 0;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--live); box-shadow: 0 0 0 2px var(--green);
+  }
+
+  /* The live round, at the top of the drawer. Same near-black surface as the
+     live bar so it reads as the same kind of thing in both places. */
+  .drawer-live {
+    display: block; width: 100%; text-align: left;
+    border: none; border-radius: 10px;
+    padding: 10px 12px; margin: 0 0 8px;
+    font: inherit; cursor: pointer;
+  }
+  .drawer-live .dl-title {
+    font-size: 12px; font-weight: 800; color: var(--live);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .drawer-live .dl-meta { font-size: 11px; color: var(--live-muted); margin-top: 1px; }
 
   .live-bar {
     display: flex; align-items: center; gap: 10px;
@@ -531,7 +668,11 @@
     font-size: 15px; font-weight: 600; letter-spacing: 0;
     color: var(--live-muted); text-shadow: none;
   }
-  .save-state { font-size: 11px; font-weight: 800; white-space: nowrap; min-width: 52px; text-align: right; }
+  /* Rides in the row's meta line rather than the row itself: with an outgoing
+     tag, a name and a score field competing for a phone's width, a reserved
+     52px gutter left nothing for the name. */
+  .save-state { font-size: 11px; font-weight: 800; white-space: nowrap; }
+  .save-state:not(:empty)::before { content: ' · '; color: var(--muted); font-weight: 400; }
   .save-state.pending { color: var(--muted); }
   .save-state.saved { color: var(--green); }
   .save-state.failed { color: var(--danger); }
@@ -539,23 +680,35 @@
 </head>
 <body>
 <header>
-  <h1 id="leagueTitle">🥏 Tags League</h1>
-  <div class="sub" id="phaseSub">League home</div>
+  <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false"
+    aria-controls="drawer" onclick="openDrawer()"><span class="ham" aria-hidden="true"></span></button>
+  <div class="head-main">
+    <h1 id="leagueTitle">🥏 Tags League</h1>
+    <!-- With no tab strip, this line is how you know which view you're in. -->
+    <div class="sub"><span class="phase" id="phaseSub">Home</span><span class="head-live" id="headLive"></span></div>
+  </div>
 </header>
-<!-- Top-level navigation between the two main views + admin -->
-<div class="tabs" id="topnav">
-  <button id="nav-home" onclick="location.hash='#/'">Home</button>
-  <button id="nav-round" onclick="location.hash='#/round'">Run round</button>
-  <button id="nav-stats" onclick="location.hash='#/stats'">Stats</button>
-  <button id="nav-admin" onclick="location.hash='#/admin'">Admin</button>
-</div>
-<!-- Round workflow sub-steps (only shown within the Round view) -->
-<div class="tabs subtabs" id="roundtabs" style="display:none">
-  <button id="tab-setup" class="active" onclick="goStep('setup')">1 · Setup</button>
-  <button id="tab-scores" onclick="goStep('scores')">2 · Scores</button>
-  <button id="tab-results" onclick="goStep('results')">3 · Results</button>
-</div>
 
+<div class="scrim" id="scrim" onclick="closeDrawer()"></div>
+<!-- Top-level navigation. Admin lives in the footer, deliberately demoted: it
+     is one person's view, not a fourth peer of the three above it. -->
+<nav class="drawer" id="drawer" aria-label="Main">
+  <div class="drawer-head">
+    <span class="dh-title">Menu</span>
+    <button class="drawer-x" aria-label="Close menu" onclick="closeDrawer()">&times;</button>
+  </div>
+  <div class="drawer-nav">
+    <button class="drawer-live live-surface" id="drawerLive" style="display:none" onclick="drawerGo('#/round')"></button>
+    <button class="drawer-item" id="nav-home" onclick="drawerGo('#/')">Home</button>
+    <!-- Label is rewritten by renderDrawerRound() to name the round you're in. -->
+    <button class="drawer-item" id="nav-round" onclick="drawerGo('#/round')">Start a round</button>
+    <button class="drawer-item" id="nav-stats" onclick="drawerGo('#/stats')">Stats</button>
+  </div>
+  <div class="drawer-foot">
+    <button class="drawer-admin" id="nav-admin" onclick="drawerGo('#/admin')">Admin</button>
+    <div class="drawer-who" id="drawerWho"></div>
+  </div>
+</nav>
 <main>
   <!-- Live-round status strip: only inside the round view, only in live mode -->
   <div id="liveBar" class="live-bar live-surface" style="display:none"></div>
@@ -579,6 +732,24 @@
       <h2 id="historyTitle">Round history</h2>
       <p class="hint" id="historyHint">Past finalized rounds. Tap one to see its tag assignments.</p>
       <div id="historyList"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- NO ROUND IN PROGRESS — the round view before you've chosen a kind.
+       Both ways into a round live here, so there is one place to look. -->
+  <section id="view-choose" style="display:none">
+    <div class="card" id="joinCard">
+      <h2 id="joinCardTitle">Join a live round</h2>
+      <div id="joinCardBody"></div>
+    </div>
+
+    <!-- Hidden when a round already exists: this view is also reachable as
+         #/join while a local round is in progress, and starting another would
+         throw that one away. -->
+    <div class="card" id="startRoundCard">
+      <h2>Start a round on this phone</h2>
+      <p class="hint">One phone keeps the card for the whole group. Nothing reaches the server until you finalize, so this works with no signal at all.</p>
+      <button class="btn secondary" onclick="startLocalRound()">Start a round</button>
     </div>
   </section>
 
@@ -612,7 +783,7 @@
       <div id="nameLocked" class="name-locked" style="display:none"></div>
       <!-- Text set in renderLiveUi(): it said "only players on the roster can be
            added" long after an admin could add one from right here, which read
-           as a dead end and sent people to the Admin tab for nothing. -->
+           as a dead end and sent people to the Admin view for nothing. -->
       <p class="hint" id="rosterHint"></p>
       <label for="pTag">Incoming tag number (1–300)</label>
       <input type="number" id="pTag" inputmode="numeric" min="1" max="300" placeholder="e.g. 42">
@@ -654,41 +825,43 @@
       </div>
     </div>
 
+    <!-- The only way forward. With the tab strip gone the round is an explicit
+         two-step wizard, so each step ends in the button that advances it. -->
+    <button class="btn" id="toScoresBtn" onclick="goStep('scores')">Enter scores →</button>
+
     <button class="btn danger" id="resetRoundBtn" onclick="resetRound()">Reset round</button>
     <button class="btn secondary" id="leaveLiveBtn" style="display:none" onclick="leaveLiveRound()">Leave this live round</button>
   </section>
 
-  <!-- SCORES -->
+  <!-- SCORES + TAGS — one list, not two.
+       The old Results step showed the same players again, re-sorted, with the
+       tag they'd won. Here the tag is a column on the row you type the score
+       into, so the consequence of a score shows up where you enter it. -->
   <section id="view-scores" style="display:none">
-    <div class="card">
-      <h2>Enter scores</h2>
-      <p class="hint" id="scoresHint">Enter each player's total score after the round. Leave blank if not finished.</p>
-      <div id="scoreList"></div>
-    </div>
-    <button class="btn" onclick="goStep('results')">View results →</button>
-  </section>
+    <button class="step-back" id="stepBackBtn" onclick="goStep('setup')">← Setup</button>
 
-  <!-- RESULTS -->
-  <section id="view-results" style="display:none">
     <div class="card">
-      <h2 id="resultsTitle">Tag assignment — preview</h2>
-      <p class="hint" id="resultsHint">Lowest score gets the lowest incoming tag. Ties: better incoming tag wins. This is a preview until you finalize.</p>
+      <h2 id="scoresTitle">Scores &amp; tags</h2>
+      <p class="hint" id="scoresHint">Enter each player's total score after the round. Leave blank if not finished.</p>
+      <p class="hint" id="resultsHint"></p>
       <p class="hint" id="resultsDate"></p>
-      <div id="resultsList"></div>
+
+      <!-- Tag order is the readout: worst score first, counting down to #1.
+           Not the default, because rows move as scores land and you can't type
+           into a list that reorders itself. -->
+      <div class="order-toggle" id="orderToggle" role="group" aria-label="List order">
+        <button id="orderName" onclick="setScoreOrder('name')">A–Z</button>
+        <button id="orderTag" onclick="setScoreOrder('tag')">Tag order</button>
+      </div>
+
+      <div id="scoreList"></div>
+      <div class="hint" id="dnfHint" style="display:none"></div>
+
       <button class="btn" id="finalizeBtn" onclick="finalizeRound()">Finalize &amp; save round</button>
       <div id="finalizeHint" class="hint" style="display:none"></div>
       <div id="finalizeMsg" class="hint" style="display:none"></div>
     </div>
 
-    <!-- Export for approval: when no admin is present to finalize live -->
-    <div class="card" id="exportCard">
-      <h2>No admin present?</h2>
-      <p class="hint">Export this round to send to an admin for review and finalizing. They paste it in the Admin tab.</p>
-      <button class="btn secondary" id="exportBtn" onclick="exportRound()">Export round for approval</button>
-      <textarea id="exportOut" readonly style="display:none"></textarea>
-      <button class="btn" id="copyExportBtn" style="display:none" onclick="copyExport()">Copy to clipboard</button>
-      <div id="exportMsg" class="hint" style="display:none"></div>
-    </div>
     <div class="card">
       <h2>Pools</h2>
       <div class="totals">
@@ -699,6 +872,16 @@
       <div id="aceList"></div>
       <label>CTP opt-ins</label>
       <div id="ctpList"></div>
+    </div>
+
+    <!-- Export for approval: when no admin is present to finalize live -->
+    <div class="card" id="exportCard">
+      <h2>No admin present?</h2>
+      <p class="hint">Export this round to send to an admin for review and finalizing. They paste it in the Admin view.</p>
+      <button class="btn secondary" id="exportBtn" onclick="exportRound()">Export round for approval</button>
+      <textarea id="exportOut" readonly style="display:none"></textarea>
+      <button class="btn" id="copyExportBtn" style="display:none" onclick="copyExport()">Copy to clipboard</button>
+      <div id="exportMsg" class="hint" style="display:none"></div>
     </div>
   </section>
 
@@ -754,7 +937,7 @@
     <!-- Import a round exported by a non-admin, for review + finalizing -->
     <div class="card" id="importCard" style="display:none">
       <h2>Import a round for approval</h2>
-      <p class="hint">Paste an exported round below. It loads into the Play tab where you can review, edit, and finalize it.</p>
+      <p class="hint">Paste an exported round below. It loads into the round view where you can review, edit, and finalize it.</p>
       <textarea id="importIn" placeholder="Paste exported round text here…"></textarea>
       <button class="btn" id="importBtn" onclick="importRound()">Load round for review</button>
       <div id="importMsg" class="hint" style="display:none"></div>
@@ -811,13 +994,26 @@
 const KEY = 'tags-round-v1';
 let state = load();
 
-// A fresh LOCAL round. Live mode reuses this shape and fills in mode/roundId/
-// code, so every renderer below works on one vocabulary regardless of mode.
+// NO round in progress. `mode` has three values: 'none' means the app is not
+// in a round at all, and it is the state the app starts in. It exists so the
+// round view has something honest to show before you have chosen a kind of
+// round — previously this was a local round with nothing in it, which meant
+// opening the round view dropped you into a round you never asked to start.
+//
+// 'local' and 'live' fill in the same shape from here, so every renderer below
+// works on one vocabulary regardless of mode.
 function blankState() {
   return {
     players: [], course: '', playDate: '', clientKey: '', finalized: null,
-    mode: 'local', roundId: null, code: '', roundStatus: ''
+    mode: 'none', roundId: null, code: '', roundStatus: ''
   };
+}
+
+// Nothing has been entered. Used to demote a stored local round back to 'none'
+// (see normalizeState) so an abandoned empty round doesn't reappear as one in
+// progress weeks later.
+function isEmptyRound(s) {
+  return !s.players.length && !s.course && !s.playDate && !s.finalized;
 }
 
 // Patch in every key a stored round might predate. A new field has to be added
@@ -828,10 +1024,14 @@ function normalizeState(s) {
   if (typeof s.playDate !== 'string') s.playDate = '';
   if (typeof s.clientKey !== 'string') s.clientKey = '';
   if (!('finalized' in s)) s.finalized = null; // server result once finalized
-  if (s.mode !== 'live') s.mode = 'local';
+  if (s.mode !== 'live' && s.mode !== 'none') s.mode = 'local';
   if (typeof s.roundId !== 'number') s.roundId = null;
   if (typeof s.code !== 'string') s.code = '';
   if (typeof s.roundStatus !== 'string') s.roundStatus = '';
+  // Migration and cleanup in one line: everyone who stored a round before
+  // 'none' existed has mode 'local', and most of them have an empty one they
+  // never meant to start. A local round with anything in it is left alone.
+  if (s.mode === 'local' && isEmptyRound(s)) s.mode = 'none';
   return s;
 }
 
@@ -844,7 +1044,27 @@ function load() {
 }
 
 function isLive() { return state.mode === 'live' && state.roundId !== null; }
+// Whether there is a round to show at all. The round view branches on this
+// before it branches on live-vs-local.
+function hasRound() { return state.mode !== 'none'; }
 function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+
+// Commit to a round on this phone. The one place 'none' becomes 'local', so
+// starting a round is now something the user does rather than something the
+// app assumes on their behalf.
+function startLocalRound() {
+  // The button is hidden whenever a round exists, so this is belt and braces —
+  // but it wipes state, and a stale click should not be able to destroy a round.
+  if (hasRound()) { goRoute('#/round'); return; }
+  state = blankState();
+  state.mode = 'local';
+  state.playDate = localToday();
+  save();
+  // Navigate rather than re-render in place: this is also reachable from
+  // #/join, where re-running the router would leave you on the join card with
+  // the button you just pressed hidden.
+  goStep('setup');
+}
 
 function setCourse(v) { state.course = String(v || '').trim(); save(); }
 function setPlayDate(v) { state.playDate = String(v || '').trim(); save(); }
@@ -870,13 +1090,75 @@ function nextId() {
   return max + 1;
 }
 
-// ─── Routing ──────────────────────────────────────────────
-// Two top-level views via hash routes: #/ = League Home, #/round = the round
-// workflow (Setup/Scores/Results sub-steps), #/admin = roster admin.
-let route = 'home';    // 'home' | 'round' | 'admin'
-let step = 'setup';    // active round sub-step when route === 'round'
+// ─── Drawer ───────────────────────────────────────────────
+// The only modal chrome in the app. Deliberately NOT a history entry: this app
+// routes on the hash, so pushing a state for "the menu is open" would make Back
+// out of a destination land on an open menu instead of the previous view.
+let drawerOpen = false;
 
-const ALL_SECTIONS = ['home','setup','scores','results','admin','stats'];
+function openDrawer() {
+  if (drawerOpen) return;
+  drawerOpen = true;
+  document.body.classList.add('drawer-open');
+  document.getElementById('menuBtn').setAttribute('aria-expanded', 'true');
+  // First destination, not the close button: the reason you opened this is
+  // almost always to go somewhere.
+  document.getElementById('nav-home').focus();
+}
+
+function closeDrawer() {
+  if (!drawerOpen) return;
+  drawerOpen = false;
+  document.body.classList.remove('drawer-open');
+  const btn = document.getElementById('menuBtn');
+  btn.setAttribute('aria-expanded', 'false');
+  // Focus has to come back out of the drawer before it goes visibility:hidden,
+  // or it lands on nothing. :focus-visible keeps this invisible to mouse users.
+  btn.focus();
+}
+
+// Go to a route, re-running the router even when the hash doesn't change.
+// Assigning an unchanged location.hash fires no hashchange, so anything that
+// navigates to the view it is already on has to route by hand — which now
+// includes joining a live round, because joining happens ON the round view.
+function goRoute(hash) {
+  if ((location.hash || '#/') === hash) router();
+  else location.hash = hash;
+}
+
+// Navigate and close. Re-selecting the current view still closes, which is how
+// you back out of a mis-tap without hunting for the ×.
+function drawerGo(hash) {
+  closeDrawer();
+  goRoute(hash);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!drawerOpen) return;
+  if (e.key === 'Escape') { closeDrawer(); return; }
+  if (e.key !== 'Tab') return;
+  // The drawer covers the page, so Tab has to stay inside it — otherwise focus
+  // walks invisibly through the content behind the scrim.
+  const items = Array.from(document.getElementById('drawer').querySelectorAll('button'))
+    .filter(el => el.offsetParent !== null);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
+// ─── Routing ──────────────────────────────────────────────
+// Top-level views via hash routes: #/ = League Home, #/round = the round
+// workflow, #/join = join a live one, #/admin = roster admin, #/stats = stats.
+//
+// The round's step is in the hash too (#/round/setup, #/round/scores) rather
+// than in a variable, so Back goes back a step instead of leaving the round,
+// and a reload lands where you were rather than always on Setup.
+let route = 'home';    // 'home' | 'round' | 'join' | 'admin' | 'stats'
+let step = 'setup';    // active round step when route === 'round'
+
+const STEPS = ['setup', 'scores'];
+const ALL_SECTIONS = ['home','choose','setup','scores','admin','stats'];
 
 function showSection(id) {
   for (const s of ALL_SECTIONS) {
@@ -888,20 +1170,29 @@ function showSection(id) {
 function router() {
   const h = location.hash || '#/';
   if (h.startsWith('#/round')) route = 'round';
+  else if (h.startsWith('#/join')) route = 'join';
   else if (h.startsWith('#/admin')) route = 'admin';
   else if (h.startsWith('#/stats')) route = 'stats';
   else route = 'home';
 
-  // Top-nav active state
+  // '#/round/scores' → step 'scores'. A bare '#/round' means the step we were
+  // last on, and gets rewritten to the explicit form below so the URL always
+  // says which step you're looking at.
+  if (route === 'round') {
+    const named = h.slice('#/round'.length).replace(/^\//, '');
+    if (STEPS.includes(named)) step = named;
+  }
+
+  // Drawer active state. 'join' isn't a drawer entry — it's where the Join
+  // button lands — but it belongs to the round, so it lights the same row.
   document.getElementById('nav-home').classList.toggle('active', route==='home');
-  document.getElementById('nav-round').classList.toggle('active', route==='round');
+  document.getElementById('nav-round').classList.toggle('active', route==='round' || route==='join');
   document.getElementById('nav-stats').classList.toggle('active', route==='stats');
   document.getElementById('nav-admin').classList.toggle('active', route==='admin');
 
-  // Round sub-tabs only visible inside the round view
-  document.getElementById('roundtabs').style.display = (route==='round') ? '' : 'none';
-
-  const subs = { home:'League home', round:'Run a round — players, scores, tags', admin:'Admin — manage roster', stats:'Stats — tag history' };
+  // Short on purpose: this is a label saying where you are, not a description.
+  // The room it leaves on the line is what the live note beside it uses.
+  const subs = { home:'Home', round:roundLabel(), join:'Join a round', admin:'Admin', stats:'Stats' };
   document.getElementById('phaseSub').textContent = subs[route];
   applyLiveChrome();  // after the line above: it rewrites the element's content
 
@@ -918,20 +1209,51 @@ function router() {
     showSection('admin');
     refreshAdminAuth();
     loadRoster();
+  } else if (route === 'join' || !hasRound()) {
+    // Either the round view with no round in it, or the Join button's
+    // destination. Same section — the difference is only whether starting a
+    // round on this phone is still on offer.
+    showSection('choose');
+    document.getElementById('startRoundCard').style.display = hasRound() ? 'none' : '';
+    renderJoinCard();
+    loadLiveRounds();
   } else {
-    // round: show the active step
-    goStep(step);
+    // round: show the active step, and make the hash name it. replaceState
+    // rather than a hash assignment — rewriting '#/round' to '#/round/setup'
+    // is a correction, not a navigation, and shouldn't cost a Back press.
+    if (location.hash !== '#/round/' + step) {
+      try { history.replaceState(null, '', '#/round/' + step); } catch (e) { /* file:// */ }
+    }
+    showStep(step);
   }
   render();
 }
 
-// Switch the active round sub-step (Setup/Scores/Results).
+// What the round view is currently showing. Used for both the drawer entry and
+// the header, so the one place you go for a round always names which one you're
+// in — the ambiguity this replaced was a single "Run round" label covering all
+// three of these.
+function roundLabel() {
+  if (isLive()) return 'Live round';
+  if (hasRound()) return 'This round';
+  return 'Start a round';
+}
+
+// Keep the drawer's round entry in step with the round itself.
+function renderDrawerRound() {
+  document.getElementById('nav-round').textContent = roundLabel();
+}
+
+// Move between the round's two steps. A step is a location, so this navigates
+// and lets the router do the work — that's what makes Back walk the wizard.
 function goStep(s) {
+  goRoute('#/round/' + s);
+}
+
+// Enter the round at step `s`. Router-only: everything else calls goStep().
+function showStep(s) {
   step = s;
   showSection(s);
-  for (const x of ['setup','scores','results']) {
-    document.getElementById('tab-'+x).classList.toggle('active', x===s);
-  }
   if (s === 'setup') {
     loadRosterForSetup();
     document.getElementById('rCourse').value = state.course || '';
@@ -944,7 +1266,7 @@ function goStep(s) {
     // wording instead.
     ensureAdminChecked();
   }
-  if (s === 'results') {
+  if (s === 'scores') {
     document.getElementById('resultsDate').textContent = isLive()
       ? 'Play date: ' + fmtDate(state.playDate || localToday())
       : 'Play date: ' + fmtDate(state.playDate || localToday()) + ' — change it in Setup.';
@@ -1613,9 +1935,30 @@ function paintScoreField(p) {
   if (warn) warn.hidden = !scoreLooksWrong(p.score);
 }
 
-// Entering scores is a lookup — you have a name in front of you and need its
-// row — so this list goes alphabetical. Setup keeps check-in order, where the
-// person just added should still be where you left them.
+// The scores list does two jobs and each wants its own order, so it has both.
+//
+//   'name' — entering scores is a lookup: you have a name in front of you and
+//            need its row. Also the only order that's safe to type into, since
+//            names don't move when a score lands.
+//   'tag'  — the readout at the end, which is the point of the whole evening:
+//            worst score first, counting down to whoever takes tag #1.
+//
+// A view preference, not round data, so it lives here rather than in state —
+// but it does have to survive a live poll's re-render, hence a module var and
+// not a local.
+let scoreOrder = 'name';
+
+function setScoreOrder(o) {
+  scoreOrder = o;
+  renderScoreList();
+}
+
+// Tag order is the only sensible order for a round that's over, and there is
+// nothing left to type into, so a finalized round ignores the toggle.
+function effectiveScoreOrder() {
+  return state.finalized ? 'tag' : scoreOrder;
+}
+
 function scoreEntryOrder() {
   return state.players.slice()
     .sort((a, b) => a.name.localeCompare(b.name) || a.tag - b.tag);
@@ -1629,17 +1972,24 @@ function setScore(id, val) {
   paintScoreField(p);
   save();
   if (isLive()) queueScoreWrite(id, p.score);
+  // A score changes who holds which tag, so the outgoing column is stale the
+  // moment one lands. In tag order that reorders the list; in name order only
+  // the numbers move — and the row being typed into must not be rebuilt.
+  if (effectiveScoreOrder() === 'tag') renderScoreList();
+  else paintOutgoingTags();
 }
 
 function resetRound() {
   if (isLive()) { leaveLiveRound(); return; } // live rounds are left, not cleared
-  if (!confirm('Clear all players and start a new round?')) return;
+  if (!confirm('Clear all players and end this round?')) return;
   // A fresh round must get a fresh clientKey, or finalizing it would replay
   // the previous round instead of saving this one.
   state = blankState();
   save();
   document.getElementById('rCourse').value = '';
-  goStep('setup');
+  // Back to the chooser, not into a new Setup: ending a round is not the same
+  // act as starting the next one, and conflating them is what this replaced.
+  router();
 }
 
 function poolTotals() {
@@ -1672,8 +2022,6 @@ function computeResults() {
 }
 
 function render() {
-  // Before the early return in the finalized branch below, so the live chrome
-  // is right even once the round is done.
   renderLiveBar();
   renderLiveUi();
   renderNoMatch();
@@ -1725,33 +2073,7 @@ function render() {
   document.getElementById('confirmRemoveBtn').textContent =
     'Remove selected (' + selectedToRemove.size + ')';
 
-  // scores list. A live round re-renders this on every poll, so anything the
-  // user is part-way through typing is captured and put back afterwards.
-  const sl = document.getElementById('scoreList');
-  const scoreFocus = captureScoreFocus();
-  if (state.players.length === 0) {
-    sl.innerHTML = '<div class="empty">' +
-      (isLive() ? 'Nobody is checked in yet.' : 'Add players in Setup first.') + '</div>';
-  } else {
-    sl.innerHTML = scoreEntryOrder().map(p => `
-      <div class="row">
-        <div class="num">${p.tag}</div>
-        <div class="score-name">
-          <div class="name">${esc(p.name)}</div>
-          <div class="score-warn" id="warn-${p.id}" hidden>${SCORE_WARN_TEXT}</div>
-        </div>
-        ${isLive() ? `<span class="save-state" data-entry="${p.id}"></span>` : ''}
-        <input class="score-in" type="number" inputmode="numeric" placeholder="score"
-          id="score-${p.id}"
-          value="${p.score===null?'':p.score}"
-          onchange="setScore(${p.id}, this.value)">
-      </div>`).join('');
-    state.players.forEach(paintScoreField);
-    if (isLive()) renderSaveStates();
-  }
-  restoreScoreFocus(scoreFocus);
-
-  // results
+  // pools, on the scores step
   document.getElementById('aceTotal2').textContent = '$' + t.ace;
   document.getElementById('ctpTotal2').textContent = '$' + t.ctp;
   const aceNames = state.players.filter(p => p.ace).map(p => `<span class="pill">${esc(p.name)}</span>`).join('') || '<span class="hint">None</span>';
@@ -1759,50 +2081,143 @@ function render() {
   document.getElementById('aceList').innerHTML = aceNames;
   document.getElementById('ctpList').innerHTML = ctpNames;
 
-  const rl = document.getElementById('resultsList');
-  const title = document.getElementById('resultsTitle');
-  const hint = document.getElementById('resultsHint');
-  const finalizeBtn = document.getElementById('finalizeBtn');
+  renderScoreList();
+}
 
-  if (state.finalized) {
-    // Finalized: show the server's authoritative assignments.
-    title.textContent = 'Tag assignment — final';
+// The rows for the scores list, in the order the toggle asks for, already
+// carrying the tag each player would leave with.
+function scoreRows() {
+  const { rows, dnfCount } = computeResults();
+  const byId = new Map(rows.map(r => [r.player.id, r]));
+  // computeResults() ranks best-first. The readout runs the other way — you
+  // start on the worst score and finish on whoever takes #1 — so tag order is
+  // that list reversed, not re-sorted.
+  const ordered = effectiveScoreOrder() === 'tag'
+    ? rows.slice().reverse()
+    : scoreEntryOrder().map(p => byId.get(p.id));
+  return { ordered, dnfCount };
+}
+
+// One row per player: the tag they'd leave with, who they are, what they
+// brought, and the field their score goes in. Split out of render() because a
+// score landing has to redraw this and nothing else — re-running render()
+// would rebuild the check-in list and the pools for no reason.
+function renderScoreList() {
+  const sl = document.getElementById('scoreList');
+  const title = document.getElementById('scoresTitle');
+  const hint = document.getElementById('resultsHint');
+  const entryHint = document.getElementById('scoresHint');
+  const dnfHint = document.getElementById('dnfHint');
+  const finalizeBtn = document.getElementById('finalizeBtn');
+  const toggle = document.getElementById('orderToggle');
+  const done = !!state.finalized;
+
+  document.getElementById('orderName').classList.toggle('on', effectiveScoreOrder() === 'name');
+  document.getElementById('orderTag').classList.toggle('on', effectiveScoreOrder() === 'tag');
+  // Finalized rounds are locked to tag order, so a toggle would be a lie.
+  toggle.style.display = done ? 'none' : '';
+  entryHint.style.display = done ? 'none' : '';
+
+  if (done) {
+    // Finalized: the server's assignments, not our preview of them.
+    title.textContent = 'Final tags';
     hint.textContent = state.finalized.course
-      ? 'Finalized · ' + esc(state.finalized.course)
+      ? 'Finalized · ' + state.finalized.course
       : 'Finalized and saved to the server.';
     finalizeBtn.style.display = 'none';
-    const fr = state.finalized.rows;
-    rl.innerHTML = fr.map(r => `
-      <div class="row result-row">
-        <div class="tag-out">#${r.assignedNumber}</div>
-        <div style="flex:1">
-          <div class="name">${esc(r.name)} ${r.dnf?'<span class="tie-flag">DNF</span>':''}</div>
-          <div class="meta">${r.dnf?'No score':'Score '+r.score} · brought #${r.incomingNumber}</div>
-        </div>
-      </div>`).join('');
+    dnfHint.style.display = 'none';
+    sl.innerHTML = state.finalized.rows.slice()
+      .sort((a, b) => b.assignedNumber - a.assignedNumber)
+      .map(r => scoreRowHtml({
+        id: null,
+        tagOut: '#' + r.assignedNumber,
+        name: r.name,
+        flags: r.dnf ? 'DNF' : '',
+        meta: (r.dnf ? 'No score' : 'Score ' + r.score) + ' · brought #' + r.incomingNumber
+      })).join('');
     return;
   }
 
-  // Not finalized: local preview.
-  title.textContent = 'Tag assignment — preview';
-  hint.textContent = 'Lowest score gets the lowest incoming tag. Ties: better incoming tag wins. This is a preview until you finalize.';
-  const { rows, dnfCount } = computeResults();
-  if (rows.length === 0) {
-    rl.innerHTML = '<div class="empty">' +
-      (isLive() ? 'Nobody is checked in yet.' : 'No players yet. Add players in step 1.') + '</div>';
+  title.textContent = 'Scores & tags';
+  hint.textContent = 'Lowest score takes the lowest tag. Ties: better incoming tag wins. A preview until you finalize.';
+
+  if (state.players.length === 0) {
+    sl.innerHTML = '<div class="empty">' +
+      (isLive() ? 'Nobody is checked in yet.' : 'No players yet — add them in Setup.') + '</div>';
     finalizeBtn.style.display = 'none';
-  } else {
-    finalizeBtn.style.display = canFinalize() ? '' : 'none';
-    rl.innerHTML = rows.map((r) => `
-      <div class="row result-row">
-        <div class="tag-out">#${r.assigned}</div>
-        <div style="flex:1">
-          <div class="name">${esc(r.player.name)} ${r.tie?'<span class="tie-flag">TIE</span>':''}${r.dnf?'<span class="tie-flag">DNF</span>':''}</div>
-          <div class="meta">${r.dnf?'No score':'Score '+r.player.score} · brought #${r.player.tag}</div>
-        </div>
-      </div>`).join('') +
-      (dnfCount ? `<div class="hint" style="margin-top:10px">${dnfCount} player(s) with no score received the highest tags.</div>` : '');
+    dnfHint.style.display = 'none';
+    return;
   }
+
+  finalizeBtn.style.display = canFinalize() ? '' : 'none';
+  // A live round re-renders this on every poll, so anything the user is
+  // part-way through typing is captured and put back afterwards.
+  const scoreFocus = captureScoreFocus();
+  const { ordered, dnfCount } = scoreRows();
+  sl.innerHTML = ordered.map(r => scoreRowHtml({
+    id: r.player.id,
+    // No score, no tag yet: a confident number beside an empty field would be
+    // an answer to a question nobody has asked. The hint below the list says
+    // where these players land.
+    tagOut: r.dnf ? '—' : '#' + r.assigned,
+    pending: r.dnf,
+    name: r.player.name,
+    flags: r.tie ? 'TIE' : '',
+    meta: 'brought #' + r.player.tag,
+    score: r.player.score,
+    live: isLive()
+  })).join('');
+  state.players.forEach(paintScoreField);
+  if (isLive()) renderSaveStates();
+  restoreScoreFocus(scoreFocus);
+
+  dnfHint.textContent = dnfCount
+    ? dnfCount + ' player(s) with no score take the highest tags.' : '';
+  dnfHint.style.display = dnfCount ? '' : 'none';
+}
+
+function scoreRowHtml(r) {
+  // A finalized row has no id: nothing on it is editable or repaintable.
+  const field = r.id === null ? '' : `
+      <input class="score-in" type="number" inputmode="numeric" placeholder="score"
+        id="score-${r.id}"
+        value="${r.score === null || r.score === undefined ? '' : r.score}"
+        aria-label="Score for ${esc(r.name)}"
+        onchange="setScore(${r.id}, this.value)">`;
+  const key = r.id === null ? '' : ` data-for="${r.id}"`;
+  return `
+    <div class="row">
+      <div class="tag-out${r.pending ? ' pending' : ''}"${key}>${esc(r.tagOut)}</div>
+      <div class="score-name">
+        <div class="name">${esc(r.name)} <span class="tie-flag"${key} ${r.flags ? '' : 'hidden'}>${esc(r.flags)}</span></div>
+        <div class="meta">${esc(r.meta)}${r.live ? `<span class="save-state" data-entry="${r.id}"></span>` : ''}</div>
+        ${r.id === null ? '' : `<div class="score-warn" id="warn-${r.id}" hidden>${SCORE_WARN_TEXT}</div>`}
+      </div>${field}
+    </div>`;
+}
+
+// The parts of a row that a score elsewhere in the list can change: the tag you
+// leave with, and whether you're tied for it. Only these, because rebuilding the
+// list would destroy the input the score was just typed into.
+function paintOutgoingTags() {
+  const { ordered, dnfCount } = scoreRows();
+  for (const r of ordered) {
+    const id = r.player.id;
+    const tag = document.querySelector('#scoreList .tag-out[data-for="' + id + '"]');
+    if (tag) {
+      tag.textContent = r.dnf ? '—' : '#' + r.assigned;
+      tag.classList.toggle('pending', r.dnf);
+    }
+    const flag = document.querySelector('#scoreList .tie-flag[data-for="' + id + '"]');
+    if (flag) {
+      flag.textContent = r.tie ? 'TIE' : '';
+      flag.hidden = !r.tie;
+    }
+  }
+  const dnfHint = document.getElementById('dnfHint');
+  dnfHint.textContent = dnfCount
+    ? dnfCount + ' player(s) with no score take the highest tags.' : '';
+  dnfHint.style.display = dnfCount ? '' : 'none';
 }
 
 // ─── API (persistent roster) ──────────────────────────────
@@ -1836,10 +2251,11 @@ async function fetchAdminIdentity() {
   }
 }
 
-// Refresh the Admin tab's auth UI: show the sign-in card or the add form.
+// Refresh the Admin view's auth UI: show the sign-in card or the add form.
 async function refreshAdminAuth() {
   adminEmail = await fetchAdminIdentity();
   adminChecked = true;
+  renderDrawerAdmin();
   const authCard = document.getElementById('authCard');
   const addCard = document.getElementById('addCard');
   const importCard = document.getElementById('importCard');
@@ -2159,7 +2575,10 @@ function enterLiveMode(round, code) {
   };
   save();
   startLivePolling();
-  location.hash = '#/round';
+  // The server owns the phase of a live round: 'open' is check-in, anything
+  // later is scoring. Land on the step the round is actually in.
+  // goStep, not a bare hash assignment: you join from the round view, so the
+  // hash is often already right and nothing would repaint.
   goStep(round.status === 'open' ? 'setup' : 'scores');
 }
 
@@ -2181,9 +2600,16 @@ function leaveLiveRound(silent, notice) {
   } catch (e) { /* unreadable backup — start clean rather than fail to leave */ }
   localStorage.removeItem(LOCAL_BACKUP_KEY);
   state = restored || blankState();
-  state.mode = 'local'; state.roundId = null; state.code = ''; state.roundStatus = '';
+  // Only a restored round is a round: with nothing stashed we land on 'none'
+  // rather than manufacturing an empty local round, which is what used to make
+  // leaving a live round feel like being dropped into a different one.
+  state.mode = restored ? 'local' : 'none';
+  state.roundId = null; state.code = ''; state.roundStatus = '';
   save();
   if (notice) joinNotice = notice;
+  // Home, always. Not every notice is actionable — "that round was discarded"
+  // has nothing to rejoin — so the caller that DOES want the code box
+  // (rejoinPrompt) navigates there itself.
   location.hash = '#/';
   router();
 }
@@ -2203,7 +2629,10 @@ async function loadLiveRounds() {
     if (!res.ok) return;
     liveRounds = await res.json();
   } catch (e) { /* offline — card falls back to whatever we last knew */ }
-  renderLiveCard();
+  // Both cards read `liveRounds`, and either can be on screen when this
+  // resolves. Repaint whichever is actually showing.
+  if (route === 'home') renderLiveCard();
+  else if (route === 'join' || (route === 'round' && !hasRound())) renderJoinCard();
 }
 
 // The LIVE badge, built once — it appears in three card titles and the markup
@@ -2225,16 +2654,47 @@ function renderLiveCard() {
     card.style.display = '';
     return;
   }
-  // Keep the card up with just the code box when we have something to say —
-  // e.g. the round we were in vanished, or a rotated code needs re-entering.
+  // Home advertises that a round is happening; the code box itself lives on the
+  // round view. Discovery and the entry point used to be the same card here,
+  // which is how joining ended up on a different page from starting.
   if (!liveRounds.length && !joinNotice) { card.style.display = 'none'; return; }
 
   // A joinable round is happening right now, so the card wears the live look
   // even before you're in one. With only a joinNotice and no round to join
   // there's nothing live to advertise, so it falls back to an ordinary card.
-  card.classList.toggle('live-surface', liveRounds.length > 0);
+  const anyLive = liveRounds.length > 0;
+  card.classList.toggle('live-surface', anyLive);
   title.innerHTML = (liveRounds.length > 1 ? 'Live rounds' : 'Live round') +
-    (liveRounds.length ? LIVE_PILL : '');
+    (anyLive ? LIVE_PILL : '');
+  const list = liveRounds.map(r => `
+    <div class="row">
+      <div style="flex:1">
+        <div class="name">${esc(r.course || 'Round')}</div>
+        <div class="meta">${esc(fmtDate(r.date))} · ${r.playerCount} checked in · ${r.status === 'open' ? 'check-in open' : 'scoring'}</div>
+      </div>
+    </div>`).join('');
+  // --danger is unreadable on the live surface, which is what --live-warn is for.
+  const notice = joinNotice
+    ? `<p class="hint" style="color:${anyLive ? 'var(--live-warn)' : 'var(--danger)'}">${esc(joinNotice)}</p>`
+    : '';
+  // #/join, not #/round: with a local round in progress the round view is that
+  // round, and this button has to reach the code box either way.
+  body.innerHTML = list + notice + `
+    <button class="btn" onclick="location.hash='#/join'">Join with a code</button>`;
+  card.style.display = '';
+}
+
+// ── The round view's join card, shown when no round is in progress ──
+
+function renderJoinCard() {
+  const card = document.getElementById('joinCard');
+  const title = document.getElementById('joinCardTitle');
+  const body = document.getElementById('joinCardBody');
+
+  // The live look only when there is actually something live to join; with no
+  // open round this is just a code box waiting for one.
+  card.classList.toggle('live-surface', liveRounds.length > 0);
+  title.innerHTML = 'Join a live round' + (liveRounds.length ? LIVE_PILL : '');
   const list = liveRounds.map(r => `
     <div class="row">
       <div style="flex:1">
@@ -2249,9 +2709,11 @@ function renderLiveCard() {
       placeholder="ABC234" aria-label="Round join code"
       onkeydown="onJoinCodeKey(event)">
     <p class="hint">Whoever opened the round has the code. Everyone in the group can use the same one.</p>
+    ${hasRound() && !isLive()
+      ? '<p class="hint">Your round on this phone is kept, and comes back when you leave the live one.</p>'
+      : ''}
     <button class="btn" id="joinBtn" onclick="joinLiveRound()">Join round</button>
     <div id="joinMsg" class="hint" style="display:none"></div>`;
-  card.style.display = '';
   if (joinNotice) showJoinMsg(joinNotice, true);
 }
 
@@ -2335,6 +2797,11 @@ function renderLiveBar() {
 // budget and locks the whole group out of the round.
 function rejoinPrompt() {
   leaveLiveRound(true, 'Enter the current code for this round.');
+  // router() by hand rather than goRoute: assigning the hash queues its event
+  // for later, and the code box has to exist NOW for the focus below to land.
+  // The queued hashchange re-runs the router harmlessly.
+  location.hash = '#/join';
+  router();
   const input = document.getElementById('joinCode');
   if (input) input.focus();
 }
@@ -2885,12 +3352,13 @@ async function finalizeLiveRound() {
   }
 }
 
-// Ask Cloudflare once whether this device is an admin, so the Results step can
+// Ask Cloudflare once whether this device is an admin, so the scores step can
 // decide whether to offer Finalize. Cheap and silent — a player just gets a 401.
 async function ensureAdminChecked() {
   if (adminChecked) return;
   adminChecked = true;
   adminEmail = await fetchAdminIdentity();
+  renderDrawerAdmin();
   render();
 }
 
@@ -2901,10 +3369,27 @@ async function ensureAdminChecked() {
 function applyLiveChrome() {
   const live = isLive();
   document.body.classList.toggle('live', live);
-  const sub = document.getElementById('phaseSub');
-  const dot = sub.querySelector('.live-dot');
-  if (live && !dot) sub.insertAdjacentHTML('afterbegin', '<span class="live-dot"></span>');
-  else if (!live && dot) dot.remove();
+  renderDrawerRound();  // same trigger: the drawer label tracks the round too
+  const note = document.getElementById('headLive');
+  const item = document.getElementById('drawerLive');
+  if (live) {
+    // Short form in the header — the date is already on the live bar, and this
+    // line has to share its width with the view name.
+    note.innerHTML = '· <span class="live-dot"></span>' + esc(state.course || 'Live round');
+    item.innerHTML =
+      '<div class="dl-title"><span class="live-dot"></span>Live round</div>' +
+      '<div class="dl-meta">' + esc(liveRoundLabel()) + '</div>';
+    item.style.display = '';
+  } else {
+    note.innerHTML = '';
+    item.style.display = 'none';
+  }
+}
+
+// The signed-in admin's email under the drawer's Admin row. Worth the space:
+// an expired Access session is otherwise invisible until a write fails.
+function renderDrawerAdmin() {
+  document.getElementById('drawerWho').textContent = adminEmail || '';
 }
 
 // ── Mode-dependent chrome ──
@@ -2921,6 +3406,10 @@ function renderLiveUi() {
   show('resetRoundBtn', !live);
   show('leaveLiveBtn', live);
   show('exportCard', !live); // a live round is already on the server
+  // Nothing to score with nobody in the round, and the step it leads to would
+  // just say so. The back link is always there — it's the only way back.
+  show('toScoresBtn', state.players.length > 0);
+  document.getElementById('stepBackBtn').textContent = live ? '← Check-in' : '← Setup';
   document.getElementById('addPlayerTitle').textContent = live ? 'Check in a player' : 'Add player';
   document.getElementById('pAddBtn').textContent = live ? 'Check in' : 'Add player';
   // Admin-dependent, not mode-dependent, but it lives here so it re-renders
@@ -2928,7 +3417,7 @@ function renderLiveUi() {
   // from this card, so don't tell them they can't.
   document.getElementById('rosterHint').textContent = adminEmail
     ? 'Start typing a roster name. If they’re not on the roster yet, you can add them to the league from here.'
-    : 'Only players on the roster can be added. An admin can add someone new — from here, or in the Admin tab.';
+    : 'Only players on the roster can be added. An admin can add someone new — from here, or in the Admin view.';
   document.getElementById('playersTitle').textContent = live ? 'Checked in' : 'Players';
   document.getElementById('scoresHint').textContent = live
     ? 'Scores save to the round as you enter them — anyone in the group can fill in any row.'
@@ -2979,7 +3468,7 @@ function restoreScoreFocus(f) {
 
 // ─── Export / import an unsanctioned round ────────────────
 // A non-admin runs a round locally, exports it as a text blob, and sends it to
-// an admin who imports it, reviews in the Play tab, and finalizes. The blob is
+// an admin who imports it, reviews in the round view, and finalizes. The blob is
 // base64-encoded JSON of the round's players (incl. rosterId, needed for
 // finalize) + course. Versioned so we can evolve the format.
 const EXPORT_VERSION = 1;
@@ -3034,7 +3523,7 @@ function importRound() {
   if (!raw) { show('Paste an exported round first.', true); return; }
   // Importing replaces the round in progress, which in live mode would strand
   // the server round and its stashed local backup. Leave first, deliberately.
-  if (isLive()) { show('Leave the live round first (Run round → Setup), then import.', true); return; }
+  if (isLive()) { show('Leave the live round first, then import.', true); return; }
 
   let payload;
   try {
@@ -3059,9 +3548,12 @@ function importRound() {
   if (state.players.length > 0 &&
       !confirm('Loading this round will replace the round currently in progress. Continue?')) return;
 
-  // Load into local round state; admin reviews/finalizes in the Play tab.
+  // Load into local round state; admin reviews/finalizes in the round view.
   state = {
     ...blankState(),
+    // blankState() is 'none' now, and an imported round is very much a round —
+    // without this the round view would offer to start one instead of showing it.
+    mode: 'local',
     players: payload.players.map((p, i) => ({
       id: i + 1, rosterId: p.rosterId, name: p.name, tag: p.tag,
       ace: !!p.ace, ctp: !!p.ctp, score: (p.score == null ? null : p.score)
@@ -3075,9 +3567,10 @@ function importRound() {
     finalized: null
   };
   save();
-  show('Round loaded. Review it in the Play tab, then finalize.', false);
-  location.hash = '#/round';
-  goStep('results');
+  show('Round loaded. Review it in the round view, then finalize.', false);
+  // Straight to the scores step: an imported round arrives already scored, so
+  // the tag assignment is what the admin is here to check.
+  goStep('scores');
 }
 
 // League Home: current tag standings (public, from /api/standings).
@@ -3247,7 +3740,7 @@ async function loadHistoryDetail(id) {
     const rows = round.entries.slice().sort((a,b) =>
       (a.assignedNumber ?? 1e9) - (b.assignedNumber ?? 1e9));
     box.innerHTML = rows.map(e => `
-      <div class="row result-row">
+      <div class="row">
         <div class="tag-out">#${e.assignedNumber ?? '—'}</div>
         <div style="flex:1">
           <div class="name">${esc(e.playerName)} ${e.score==null?'<span class="tie-flag">DNF</span>':''}</div>
