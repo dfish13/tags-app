@@ -9,8 +9,8 @@ export const DEV_ADMIN_EMAIL = "dev-admin@example.test";
 
 // Fixed on purpose: a stable code means the check-in flow can be tested without
 // first digging the round's code out of the Admin tab. Valid under
-// lib/roundCode.ts's alphabet (no 0/O/1/I/L).
-export const DEV_JOIN_CODE = "TAGS99";
+// lib/roundCode.ts's alphabet and length (four letters, no O/I/L).
+export const DEV_JOIN_CODE = "TAGS";
 
 export const DEV_PORT = Number(process.env.PORT) || 8123;
 

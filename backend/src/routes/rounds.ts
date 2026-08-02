@@ -528,9 +528,10 @@ function uniqueViolationConstraint(err: unknown): string | null {
 // code lying around for days.
 const DEFAULT_CODE_HOURS = 12;
 
-// Mint a join code that isn't already taken. The column is globally unique, so
-// a collision is possible (and astronomically unlikely); retry rather than
-// surface a 500 for it.
+// Mint a join code that isn't already taken. The column is globally unique, but
+// only unfinalized rounds hold a code and there is rarely more than one, so a
+// clash is a ~1-in-280k event rather than something to design around. Retry
+// rather than surface a 500 for it.
 async function mintCode(expiresInHours: number) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = generateCode();

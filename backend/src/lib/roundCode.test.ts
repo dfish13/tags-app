@@ -6,9 +6,11 @@ test("generated codes avoid glyphs people mishear", () => {
   // 0/O/1/I/L are the ones that get mistranscribed when a code is read aloud
   // across a parking lot. If they ever creep back into the alphabet, the codes
   // still "work" — they just start failing for humans, which is why this is a
-  // test and not a comment.
+  // test and not a comment. Digits are excluded outright for the same reason:
+  // a letters-only code is unambiguous to say out loud.
   for (let i = 0; i < 500; i++) {
-    assert.doesNotMatch(generateCode(), /[01OIL]/);
+    assert.match(generateCode(), /^[A-Z]+$/);
+    assert.doesNotMatch(generateCode(), /[OIL]/);
   }
 });
 
@@ -29,20 +31,21 @@ test("generated codes are not obviously biased", () => {
 });
 
 test("normalizeCode accepts what a human actually types", () => {
-  assert.equal(normalizeCode("abc234"), "ABC234");
-  assert.equal(normalizeCode("ABC-234"), "ABC234");
-  assert.equal(normalizeCode(" abc 234 "), "ABC234");
-  assert.equal(normalizeCode("a-b c2 3 4"), "ABC234");
+  assert.equal(normalizeCode("abcd"), "ABCD");
+  assert.equal(normalizeCode("AB-CD"), "ABCD");
+  assert.equal(normalizeCode(" abcd "), "ABCD");
+  assert.equal(normalizeCode("a-b c d"), "ABCD");
 });
 
 test("normalizeCode rejects anything that can't be a code", () => {
-  assert.equal(normalizeCode("ABC23"), null, "too short");
-  assert.equal(normalizeCode("ABC2345"), null, "too long");
-  assert.equal(normalizeCode("ABC23O"), null, "excluded glyph");
-  assert.equal(normalizeCode("ABC23!"), null, "punctuation");
+  assert.equal(normalizeCode("ABC"), null, "too short");
+  assert.equal(normalizeCode("ABCDE"), null, "too long");
+  assert.equal(normalizeCode("ABCO"), null, "excluded glyph");
+  assert.equal(normalizeCode("ABC2"), null, "digits are no longer codes");
+  assert.equal(normalizeCode("ABC!"), null, "punctuation");
   assert.equal(normalizeCode(""), null);
   assert.equal(normalizeCode(null), null);
   assert.equal(normalizeCode(undefined), null);
-  assert.equal(normalizeCode(123456), null, "non-string");
+  assert.equal(normalizeCode(1234), null, "non-string");
   assert.equal(normalizeCode({}), null);
 });
