@@ -93,9 +93,114 @@
     top: 0;
     z-index: 10;
     box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    /* The menu button sits beside the title block rather than above it: the
+       header is the only row of chrome now, so it has to stay one row tall. */
+    display: flex;
+    align-items: center;
+    gap: 14px;
   }
+  header .head-main { min-width: 0; }
   header h1 { margin: 0; font-size: 19px; font-weight: 700; }
-  header .sub { font-size: 13px; opacity: .85; margin-top: 2px; }
+  header .sub {
+    font-size: 13px; opacity: .85; margin-top: 2px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  /* The view name is the ONLY wayfinding once the tabs are gone, so it never
+     shrinks; the live note beside it is what gives way on a narrow phone. */
+  header .sub .phase { flex-shrink: 0; }
+  header .sub .head-live { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Hamburger. Drawn from borders rather than ☰ or an icon font: the glyph
+     renders at wildly different weights across platforms, and this one can
+     carry the live dot (below) without a second element. */
+  .menu-btn {
+    flex-shrink: 0;
+    background: none; border: none; padding: 6px; margin: -6px 0 -6px -6px;
+    color: inherit; cursor: pointer; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px;
+  }
+  .menu-btn .ham {
+    position: relative; display: block;
+    width: 20px; height: 2px; background: currentColor; border-radius: 2px;
+  }
+  .menu-btn .ham::before, .menu-btn .ham::after {
+    content: ''; position: absolute; left: 0;
+    width: 20px; height: 2px; background: currentColor; border-radius: 2px;
+  }
+  .menu-btn .ham::before { top: -6px; }
+  .menu-btn .ham::after { top: 6px; }
+
+  .scrim {
+    position: fixed; inset: 0; z-index: 20;
+    background: rgba(0,0,0,.45);
+    opacity: 0; visibility: hidden;
+    transition: opacity .18s ease, visibility .18s ease;
+  }
+  .drawer {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 21;
+    width: min(78vw, 290px);
+    background: var(--card);
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    /* visibility, not just the transform: translated off-screen it would still
+       be focusable and still read by a screen reader, so Tab would walk through
+       an invisible menu. Transitioning INTO visible applies at the start of the
+       transition, so the slide-in is still animated. */
+    visibility: hidden;
+    transition: transform .2s ease, visibility .2s ease;
+  }
+  body.drawer-open .scrim { opacity: 1; visibility: visible; }
+  body.drawer-open .drawer { transform: none; visibility: visible; }
+  body.drawer-open { overflow: hidden; }
+  @media (prefers-reduced-motion: reduce) {
+    .scrim, .drawer { transition: none; }
+  }
+
+  .drawer-head {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--green); color: var(--on-primary);
+    padding: 14px 8px 14px 16px;
+  }
+  .drawer-head .dh-title { font-size: 17px; font-weight: 700; }
+  .drawer-x {
+    background: none; border: none; color: inherit; cursor: pointer;
+    font-size: 26px; line-height: 1; padding: 4px 12px;
+  }
+  .drawer-nav { padding: 8px; }
+  .drawer-item {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; border-radius: 9px;
+    padding: 13px 12px; margin-bottom: 2px;
+    font: inherit; font-size: 16px; font-weight: 600;
+    color: var(--text); cursor: pointer;
+  }
+  .drawer-item.active {
+    background: color-mix(in srgb, var(--primary-ink) 12%, transparent);
+    color: var(--primary-ink);
+  }
+  /* Admin is deliberately not a peer of the three above: below a rule, at the
+     bottom, smaller and muted. Still reachable — a new admin has to be able to
+     find the sign-in — but nothing about it invites a player to tap it. */
+  .drawer-foot {
+    margin-top: auto;
+    border-top: 1px solid var(--line);
+    padding: 8px;
+  }
+  .drawer-admin {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; border-radius: 9px;
+    padding: 9px 12px;
+    font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--muted); cursor: pointer;
+  }
+  .drawer-admin.active { color: var(--primary-ink); }
+  .drawer-who {
+    font-size: 11px; color: var(--muted);
+    padding: 0 12px 6px; word-break: break-all;
+  }
 
   .tabs {
     display: flex;
@@ -489,8 +594,30 @@
      that you can't be in one without knowing it. */
   body.live header { box-shadow: 0 2px 6px rgba(0,0,0,.15), inset 0 -3px 0 var(--live); }
   body.live .tabs.subtabs button.active { border-bottom-color: var(--live); }
-  body.live header .sub { color: var(--live); opacity: 1; font-weight: 600; }
+  body.live header .sub .head-live { color: var(--live); opacity: 1; font-weight: 600; }
   body.live header .sub .live-dot { display: inline-block; vertical-align: 0; margin-right: 5px; }
+  /* With the tabs gone the menu button is the only chrome on three of the four
+     views, so it — not just the header rule — has to say a round is running.
+     Ringed in the header green so the dot reads as a badge at any size. */
+  body.live .menu-btn::after {
+    content: ''; position: absolute; top: 2px; right: 0;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--live); box-shadow: 0 0 0 2px var(--green);
+  }
+
+  /* The live round, at the top of the drawer. Same near-black surface as the
+     live bar so it reads as the same kind of thing in both places. */
+  .drawer-live {
+    display: block; width: 100%; text-align: left;
+    border: none; border-radius: 10px;
+    padding: 10px 12px; margin: 0 0 8px;
+    font: inherit; cursor: pointer;
+  }
+  .drawer-live .dl-title {
+    font-size: 12px; font-weight: 800; color: var(--live);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .drawer-live .dl-meta { font-size: 11px; color: var(--live-muted); margin-top: 1px; }
 
   .live-bar {
     display: flex; align-items: center; gap: 10px;
@@ -539,16 +666,34 @@
 </head>
 <body>
 <header>
-  <h1 id="leagueTitle">🥏 Tags League</h1>
-  <div class="sub" id="phaseSub">League home</div>
+  <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false"
+    aria-controls="drawer" onclick="openDrawer()"><span class="ham" aria-hidden="true"></span></button>
+  <div class="head-main">
+    <h1 id="leagueTitle">🥏 Tags League</h1>
+    <!-- With no tab strip, this line is how you know which view you're in. -->
+    <div class="sub"><span class="phase" id="phaseSub">Home</span><span class="head-live" id="headLive"></span></div>
+  </div>
 </header>
-<!-- Top-level navigation between the two main views + admin -->
-<div class="tabs" id="topnav">
-  <button id="nav-home" onclick="location.hash='#/'">Home</button>
-  <button id="nav-round" onclick="location.hash='#/round'">Run round</button>
-  <button id="nav-stats" onclick="location.hash='#/stats'">Stats</button>
-  <button id="nav-admin" onclick="location.hash='#/admin'">Admin</button>
-</div>
+
+<div class="scrim" id="scrim" onclick="closeDrawer()"></div>
+<!-- Top-level navigation. Admin lives in the footer, deliberately demoted: it
+     is one person's view, not a fourth peer of the three above it. -->
+<nav class="drawer" id="drawer" aria-label="Main">
+  <div class="drawer-head">
+    <span class="dh-title">Menu</span>
+    <button class="drawer-x" aria-label="Close menu" onclick="closeDrawer()">&times;</button>
+  </div>
+  <div class="drawer-nav">
+    <button class="drawer-live live-surface" id="drawerLive" style="display:none" onclick="drawerGo('#/round')"></button>
+    <button class="drawer-item" id="nav-home" onclick="drawerGo('#/')">Home</button>
+    <button class="drawer-item" id="nav-round" onclick="drawerGo('#/round')">Run round</button>
+    <button class="drawer-item" id="nav-stats" onclick="drawerGo('#/stats')">Stats</button>
+  </div>
+  <div class="drawer-foot">
+    <button class="drawer-admin" id="nav-admin" onclick="drawerGo('#/admin')">Admin</button>
+    <div class="drawer-who" id="drawerWho"></div>
+  </div>
+</nav>
 <!-- Round workflow sub-steps (only shown within the Round view) -->
 <div class="tabs subtabs" id="roundtabs" style="display:none">
   <button id="tab-setup" class="active" onclick="goStep('setup')">1 · Setup</button>
@@ -612,7 +757,7 @@
       <div id="nameLocked" class="name-locked" style="display:none"></div>
       <!-- Text set in renderLiveUi(): it said "only players on the roster can be
            added" long after an admin could add one from right here, which read
-           as a dead end and sent people to the Admin tab for nothing. -->
+           as a dead end and sent people to the Admin view for nothing. -->
       <p class="hint" id="rosterHint"></p>
       <label for="pTag">Incoming tag number (1–300)</label>
       <input type="number" id="pTag" inputmode="numeric" min="1" max="300" placeholder="e.g. 42">
@@ -683,7 +828,7 @@
     <!-- Export for approval: when no admin is present to finalize live -->
     <div class="card" id="exportCard">
       <h2>No admin present?</h2>
-      <p class="hint">Export this round to send to an admin for review and finalizing. They paste it in the Admin tab.</p>
+      <p class="hint">Export this round to send to an admin for review and finalizing. They paste it in the Admin view.</p>
       <button class="btn secondary" id="exportBtn" onclick="exportRound()">Export round for approval</button>
       <textarea id="exportOut" readonly style="display:none"></textarea>
       <button class="btn" id="copyExportBtn" style="display:none" onclick="copyExport()">Copy to clipboard</button>
@@ -870,6 +1015,56 @@ function nextId() {
   return max + 1;
 }
 
+// ─── Drawer ───────────────────────────────────────────────
+// The only modal chrome in the app. Deliberately NOT a history entry: this app
+// routes on the hash, so pushing a state for "the menu is open" would make Back
+// out of a destination land on an open menu instead of the previous view.
+let drawerOpen = false;
+
+function openDrawer() {
+  if (drawerOpen) return;
+  drawerOpen = true;
+  document.body.classList.add('drawer-open');
+  document.getElementById('menuBtn').setAttribute('aria-expanded', 'true');
+  // First destination, not the close button: the reason you opened this is
+  // almost always to go somewhere.
+  document.getElementById('nav-home').focus();
+}
+
+function closeDrawer() {
+  if (!drawerOpen) return;
+  drawerOpen = false;
+  document.body.classList.remove('drawer-open');
+  const btn = document.getElementById('menuBtn');
+  btn.setAttribute('aria-expanded', 'false');
+  // Focus has to come back out of the drawer before it goes visibility:hidden,
+  // or it lands on nothing. :focus-visible keeps this invisible to mouse users.
+  btn.focus();
+}
+
+// Navigate and close. Re-selecting the current view still closes, which is how
+// you back out of a mis-tap without hunting for the ×.
+function drawerGo(hash) {
+  closeDrawer();
+  const current = location.hash || '#/';
+  if (current === hash) router();
+  else location.hash = hash;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!drawerOpen) return;
+  if (e.key === 'Escape') { closeDrawer(); return; }
+  if (e.key !== 'Tab') return;
+  // The drawer covers the page, so Tab has to stay inside it — otherwise focus
+  // walks invisibly through the content behind the scrim.
+  const items = Array.from(document.getElementById('drawer').querySelectorAll('button'))
+    .filter(el => el.offsetParent !== null);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
 // ─── Routing ──────────────────────────────────────────────
 // Two top-level views via hash routes: #/ = League Home, #/round = the round
 // workflow (Setup/Scores/Results sub-steps), #/admin = roster admin.
@@ -892,7 +1087,7 @@ function router() {
   else if (h.startsWith('#/stats')) route = 'stats';
   else route = 'home';
 
-  // Top-nav active state
+  // Drawer active state
   document.getElementById('nav-home').classList.toggle('active', route==='home');
   document.getElementById('nav-round').classList.toggle('active', route==='round');
   document.getElementById('nav-stats').classList.toggle('active', route==='stats');
@@ -901,7 +1096,9 @@ function router() {
   // Round sub-tabs only visible inside the round view
   document.getElementById('roundtabs').style.display = (route==='round') ? '' : 'none';
 
-  const subs = { home:'League home', round:'Run a round — players, scores, tags', admin:'Admin — manage roster', stats:'Stats — tag history' };
+  // Short on purpose: this is a label saying where you are, not a description.
+  // The room it leaves on the line is what the live note beside it uses.
+  const subs = { home:'Home', round:'Run a round', admin:'Admin', stats:'Stats' };
   document.getElementById('phaseSub').textContent = subs[route];
   applyLiveChrome();  // after the line above: it rewrites the element's content
 
@@ -1836,10 +2033,11 @@ async function fetchAdminIdentity() {
   }
 }
 
-// Refresh the Admin tab's auth UI: show the sign-in card or the add form.
+// Refresh the Admin view's auth UI: show the sign-in card or the add form.
 async function refreshAdminAuth() {
   adminEmail = await fetchAdminIdentity();
   adminChecked = true;
+  renderDrawerAdmin();
   const authCard = document.getElementById('authCard');
   const addCard = document.getElementById('addCard');
   const importCard = document.getElementById('importCard');
@@ -2891,6 +3089,7 @@ async function ensureAdminChecked() {
   if (adminChecked) return;
   adminChecked = true;
   adminEmail = await fetchAdminIdentity();
+  renderDrawerAdmin();
   render();
 }
 
@@ -2901,10 +3100,26 @@ async function ensureAdminChecked() {
 function applyLiveChrome() {
   const live = isLive();
   document.body.classList.toggle('live', live);
-  const sub = document.getElementById('phaseSub');
-  const dot = sub.querySelector('.live-dot');
-  if (live && !dot) sub.insertAdjacentHTML('afterbegin', '<span class="live-dot"></span>');
-  else if (!live && dot) dot.remove();
+  const note = document.getElementById('headLive');
+  const item = document.getElementById('drawerLive');
+  if (live) {
+    // Short form in the header — the date is already on the live bar, and this
+    // line has to share its width with the view name.
+    note.innerHTML = '· <span class="live-dot"></span>' + esc(state.course || 'Live round');
+    item.innerHTML =
+      '<div class="dl-title"><span class="live-dot"></span>Live round</div>' +
+      '<div class="dl-meta">' + esc(liveRoundLabel()) + '</div>';
+    item.style.display = '';
+  } else {
+    note.innerHTML = '';
+    item.style.display = 'none';
+  }
+}
+
+// The signed-in admin's email under the drawer's Admin row. Worth the space:
+// an expired Access session is otherwise invisible until a write fails.
+function renderDrawerAdmin() {
+  document.getElementById('drawerWho').textContent = adminEmail || '';
 }
 
 // ── Mode-dependent chrome ──
@@ -2928,7 +3143,7 @@ function renderLiveUi() {
   // from this card, so don't tell them they can't.
   document.getElementById('rosterHint').textContent = adminEmail
     ? 'Start typing a roster name. If they’re not on the roster yet, you can add them to the league from here.'
-    : 'Only players on the roster can be added. An admin can add someone new — from here, or in the Admin tab.';
+    : 'Only players on the roster can be added. An admin can add someone new — from here, or in the Admin view.';
   document.getElementById('playersTitle').textContent = live ? 'Checked in' : 'Players';
   document.getElementById('scoresHint').textContent = live
     ? 'Scores save to the round as you enter them — anyone in the group can fill in any row.'

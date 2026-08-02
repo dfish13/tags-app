@@ -59,7 +59,7 @@ Normally one person runs a round on one phone. A live round instead puts the
 round on the server and lets everyone write to it, so a group can spread out
 and still be entering scores into the same round.
 
-**Running one** (Admin tab, signed in):
+**Running one** (Admin view, signed in):
 
 1. **Open a live round** — pick the date and course. The app mints a
    six-character join code and shows it large, because it gets read aloud on a
@@ -107,7 +107,7 @@ with the round, so an unsent score never follows you into a different one.
 ## Adding a player who isn't on the roster
 
 Only roster players can be put in a round, which used to mean stopping
-mid-setup, going to the Admin tab, adding them, and coming back. Now typing a
+mid-setup, going to the Admin view, adding them, and coming back. Now typing a
 name with no exact roster match opens a resolver in place.
 
 It lists **every roster player who might already be them**, each with the
@@ -135,7 +135,7 @@ right spelling — but are told to ask an admin rather than offered the create
 option. `POST /api/admin/players` is Access-gated regardless.
 
 The hint under the name field says which of those two you are looking at, so a
-signed-in admin isn't told to go to the Admin tab for something they can do
+signed-in admin isn't told to go to the Admin view for something they can do
 right there.
 
 ## Bringing a tag the app thinks someone else has
@@ -160,7 +160,7 @@ They differ in *when* the old holder loses it:
   That is an **admin** write, and it matches what `PATCH /api/admin/players/:id/tag`
   has always done. It needs `takeTag: true`, which the app sends only after the
   admin has been shown the holder's name and agreed — so a mistyped number in the
-  Admin tab's roster form still bounces with a plain `409`.
+  Admin view's roster form still bounces with a plain `409`.
 
 The `409` carries a structured `heldBy` alongside the message, which is what
 lets the check-in flow offer "reissue it anyway" instead of dead-ending an admin
@@ -225,7 +225,7 @@ Two things production has that a laptop doesn't, both faked in
 `backend/src/dev/server.ts`: the single origin in front of the API and the
 static file, and **Cloudflare Access**. The frontend asks
 `/cdn-cgi/access/get-identity` who you are and hides every admin control if
-nobody answers, so without the stand-in there is no Admin tab to test.
+nobody answers, so without the stand-in there is no Admin view to test.
 
 That server hands an admin identity to anyone who asks, and the fixture
 truncates every table — so `src/dev/` is excluded from the build and can't
