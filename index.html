@@ -269,6 +269,22 @@
   .badge-ace { background: var(--accent); color: var(--accent-text); }
   .badge-ctp { background: var(--blue); color: var(--secondary-text); }
   .row .score-in { width: 80px; }
+  /* No spinners. They eat a third of a field this narrow and nobody nudges a
+     score one stroke at a time on a phone — the numeric keypad is the input.
+     type=number stays, for the keypad and the parsing. */
+  .row .score-in { -moz-appearance: textfield; appearance: textfield; }
+  .row .score-in::-webkit-outer-spin-button,
+  .row .score-in::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  /* Who still owes a score has to be readable at arm's length, mid-round, on a
+     phone: an empty field stays a dashed outline that reads as a hole, a filled
+     one goes solid and bold. Border + weight rather than a fill, so the pair
+     survives whatever --field and --card a league's theme lands on. */
+  .row .score-in.unscored { border-style: dashed; background: transparent; }
+  .row .score-in.scored { border-color: var(--primary-ink); font-weight: 700; }
+  /* After .scored, which it has to out-rank on the same specificity. */
+  .row .score-in.suspect { border-color: var(--danger-ink); border-style: solid; }
+  .row .score-name { flex: 1; min-width: 0; }
+  .score-warn { font-size: 11px; font-weight: 700; color: var(--danger-ink); }
   .row .x {
     background: none; border: none; color: var(--danger-ink);
     font-size: 22px; cursor: pointer; padding: 4px 8px;
@@ -1569,11 +1585,48 @@ function confirmRemove() {
   render();
 }
 
+// A total outside this band is almost certainly a slip of the thumb — a digit
+// dropped or one too many ('5', '522'). The band is deliberately wide: it only
+// has to catch the obviously-wrong, and a real entry can be a 9-hole round in
+// the twenties or a beginner's very long day. Flagged, never refused — the
+// score is still saved, because a warning that eats input is worse than a typo.
+const SCORE_MIN = 18, SCORE_MAX = 200;
+// Terse on purpose: in a live round this shares the row with the save
+// indicator, and a longer sentence wraps the row to three lines on a phone.
+const SCORE_WARN_TEXT = `Check this — usually ${SCORE_MIN}–${SCORE_MAX}`;
+
+function scoreLooksWrong(score) {
+  return score !== null && (score < SCORE_MIN || score > SCORE_MAX);
+}
+
+// The field itself carries the state: filled, still empty, or filled but
+// doubtful. Called on change as well as at render, because setScore() must not
+// re-render — that would rebuild the input under the typing thumb.
+function paintScoreField(p) {
+  const el = document.getElementById('score-' + p.id);
+  if (el) {
+    el.classList.toggle('scored', p.score !== null);
+    el.classList.toggle('unscored', p.score === null);
+    el.classList.toggle('suspect', scoreLooksWrong(p.score));
+  }
+  const warn = document.getElementById('warn-' + p.id);
+  if (warn) warn.hidden = !scoreLooksWrong(p.score);
+}
+
+// Entering scores is a lookup — you have a name in front of you and need its
+// row — so this list goes alphabetical. Setup keeps check-in order, where the
+// person just added should still be where you left them.
+function scoreEntryOrder() {
+  return state.players.slice()
+    .sort((a, b) => a.name.localeCompare(b.name) || a.tag - b.tag);
+}
+
 function setScore(id, val) {
   const p = state.players.find(p => p.id === id);
   if (!p) return;
   const n = val.trim() === '' ? null : parseInt(val, 10);
   p.score = (n !== null && !isNaN(n)) ? n : null;
+  paintScoreField(p);
   save();
   if (isLive()) queueScoreWrite(id, p.score);
 }
@@ -1680,16 +1733,20 @@ function render() {
     sl.innerHTML = '<div class="empty">' +
       (isLive() ? 'Nobody is checked in yet.' : 'Add players in Setup first.') + '</div>';
   } else {
-    sl.innerHTML = state.players.map(p => `
+    sl.innerHTML = scoreEntryOrder().map(p => `
       <div class="row">
         <div class="num">${p.tag}</div>
-        <div class="name">${esc(p.name)}</div>
+        <div class="score-name">
+          <div class="name">${esc(p.name)}</div>
+          <div class="score-warn" id="warn-${p.id}" hidden>${SCORE_WARN_TEXT}</div>
+        </div>
         ${isLive() ? `<span class="save-state" data-entry="${p.id}"></span>` : ''}
         <input class="score-in" type="number" inputmode="numeric" placeholder="score"
           id="score-${p.id}"
           value="${p.score===null?'':p.score}"
           onchange="setScore(${p.id}, this.value)">
       </div>`).join('');
+    state.players.forEach(paintScoreField);
     if (isLive()) renderSaveStates();
   }
   restoreScoreFocus(scoreFocus);
