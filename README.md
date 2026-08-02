@@ -75,6 +75,33 @@ is nowhere for Home's Join button to go. On `#/join` the "start a round on this
 phone" half is hidden — you already have one — and the card says the local round
 is kept and comes back when you leave the live one.
 
+### Two steps, not three
+
+A round is a wizard with two steps, each its own route: `#/round/setup` (who's
+playing, and with which tags) and `#/round/scores`. There is no tab strip — you
+go forward with the button that ends the setup step and back with the link at
+the top of the scores step. The step is in the hash so Back walks the wizard
+instead of leaving the round, and a reload lands where you were.
+
+There used to be a third step, Results, listing the same players again with the
+tags they'd won. Now the tag is a **column on the row you type the score into**,
+so the consequence of a score shows up where you enter it — and the round has as
+many steps as a live one actually has states on the server (`open`, then
+`scoring`; `finalized` is a readout, not a step you work in).
+
+The scores list has two orders, because it does two jobs:
+
+- **A–Z** while entering. Entering scores is a lookup — you have a name in front
+  of you and need its row — and it is the only order safe to type into, since a
+  name doesn't move when a score lands.
+- **Tag order** for reading the result out at the end: worst score first,
+  counting down to whoever takes tag #1. A finalized round is locked to this
+  order, because nothing is left to type.
+
+A player with no score yet shows a dashed `—` instead of a tag. They do get one
+(the highest, as the hint under the list says), but printing a confident number
+beside an empty field answers a question nobody has asked yet.
+
 ## Live rounds
 
 Normally one person runs a round on one phone. A live round instead puts the
@@ -93,7 +120,7 @@ and still be entering scores into the same round.
 3. **Close check-in** once everyone is in. Scores keep saving; nobody new can
    join. This is a separate step from finalizing because a late check-in
    changes the tag pool, and therefore what everyone else can win.
-4. **Finalize** from the Results step, as usual. Tags are redistributed and the
+4. **Finalize** from the scores step, as usual. Tags are redistributed and the
    code stops working.
 
 **New code** reissues the code and kills the old one — for when it has been
