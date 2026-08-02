@@ -53,6 +53,28 @@ reaches only the entries of one round, and only while that round is open.
 | `round_entries` | One row per player per round (incoming tag, score, assigned tag) |
 | `admins` | Email allowlist for write access |
 
+## The round view
+
+There is only ever **one round in progress**, and it is either on this phone or
+on the server — `state.mode` is `none`, `local` or `live`, and entering a live
+round stashes any local one and restores it on the way out. The round view shows
+whichever you're in, and the drawer entry names it: *Start a round*, *This
+round*, or *Live round*.
+
+`none` is the state the app starts in. Before it existed, an empty local round
+stood in for "no round", so opening the round view silently started one and both
+ways into a round lived on different pages — joining on Home, starting under the
+round view. With a real empty state the view can ask the question instead: join
+a live round with a code, or start one on this phone. Home still advertises that
+a live round is happening, but its **Join** button goes to the code box rather
+than hosting one.
+
+That code box is also its own route, `#/join`. It has to be: once a local round
+is in progress the round view *is* that round, so without a separate route there
+is nowhere for Home's Join button to go. On `#/join` the "start a round on this
+phone" half is hidden — you already have one — and the card says the local round
+is kept and comes back when you leave the live one.
+
 ## Live rounds
 
 Normally one person runs a round on one phone. A live round instead puts the
@@ -65,9 +87,9 @@ and still be entering scores into the same round.
    six-character join code and shows it large, because it gets read aloud on a
    first tee. The alphabet omits `0 O 1 I L`, which are the glyphs people
    mishear.
-2. **Read the code out.** Players go to Home, tap **Join**, and type it. They
-   check themselves in — picking their name from the roster autofills the tag
-   they currently hold — and enter their own scores as they play.
+2. **Read the code out.** Players open the round view and type it. They check
+   themselves in — picking their name from the roster autofills the tag they
+   currently hold — and enter their own scores as they play.
 3. **Close check-in** once everyone is in. Scores keep saving; nobody new can
    join. This is a separate step from finalizing because a late check-in
    changes the tag pool, and therefore what everyone else can win.

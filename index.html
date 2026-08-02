@@ -686,7 +686,8 @@
   <div class="drawer-nav">
     <button class="drawer-live live-surface" id="drawerLive" style="display:none" onclick="drawerGo('#/round')"></button>
     <button class="drawer-item" id="nav-home" onclick="drawerGo('#/')">Home</button>
-    <button class="drawer-item" id="nav-round" onclick="drawerGo('#/round')">Run round</button>
+    <!-- Label is rewritten by renderDrawerRound() to name the round you're in. -->
+    <button class="drawer-item" id="nav-round" onclick="drawerGo('#/round')">Start a round</button>
     <button class="drawer-item" id="nav-stats" onclick="drawerGo('#/stats')">Stats</button>
   </div>
   <div class="drawer-foot">
@@ -724,6 +725,24 @@
       <h2 id="historyTitle">Round history</h2>
       <p class="hint" id="historyHint">Past finalized rounds. Tap one to see its tag assignments.</p>
       <div id="historyList"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- NO ROUND IN PROGRESS — the round view before you've chosen a kind.
+       Both ways into a round live here, so there is one place to look. -->
+  <section id="view-choose" style="display:none">
+    <div class="card" id="joinCard">
+      <h2 id="joinCardTitle">Join a live round</h2>
+      <div id="joinCardBody"></div>
+    </div>
+
+    <!-- Hidden when a round already exists: this view is also reachable as
+         #/join while a local round is in progress, and starting another would
+         throw that one away. -->
+    <div class="card" id="startRoundCard">
+      <h2>Start a round on this phone</h2>
+      <p class="hint">One phone keeps the card for the whole group. Nothing reaches the server until you finalize, so this works with no signal at all.</p>
+      <button class="btn secondary" onclick="startLocalRound()">Start a round</button>
     </div>
   </section>
 
@@ -899,7 +918,7 @@
     <!-- Import a round exported by a non-admin, for review + finalizing -->
     <div class="card" id="importCard" style="display:none">
       <h2>Import a round for approval</h2>
-      <p class="hint">Paste an exported round below. It loads into the Play tab where you can review, edit, and finalize it.</p>
+      <p class="hint">Paste an exported round below. It loads into the round view where you can review, edit, and finalize it.</p>
       <textarea id="importIn" placeholder="Paste exported round text here…"></textarea>
       <button class="btn" id="importBtn" onclick="importRound()">Load round for review</button>
       <div id="importMsg" class="hint" style="display:none"></div>
@@ -956,13 +975,26 @@
 const KEY = 'tags-round-v1';
 let state = load();
 
-// A fresh LOCAL round. Live mode reuses this shape and fills in mode/roundId/
-// code, so every renderer below works on one vocabulary regardless of mode.
+// NO round in progress. `mode` has three values: 'none' means the app is not
+// in a round at all, and it is the state the app starts in. It exists so the
+// round view has something honest to show before you have chosen a kind of
+// round — previously this was a local round with nothing in it, which meant
+// opening the round view dropped you into a round you never asked to start.
+//
+// 'local' and 'live' fill in the same shape from here, so every renderer below
+// works on one vocabulary regardless of mode.
 function blankState() {
   return {
     players: [], course: '', playDate: '', clientKey: '', finalized: null,
-    mode: 'local', roundId: null, code: '', roundStatus: ''
+    mode: 'none', roundId: null, code: '', roundStatus: ''
   };
+}
+
+// Nothing has been entered. Used to demote a stored local round back to 'none'
+// (see normalizeState) so an abandoned empty round doesn't reappear as one in
+// progress weeks later.
+function isEmptyRound(s) {
+  return !s.players.length && !s.course && !s.playDate && !s.finalized;
 }
 
 // Patch in every key a stored round might predate. A new field has to be added
@@ -973,10 +1005,14 @@ function normalizeState(s) {
   if (typeof s.playDate !== 'string') s.playDate = '';
   if (typeof s.clientKey !== 'string') s.clientKey = '';
   if (!('finalized' in s)) s.finalized = null; // server result once finalized
-  if (s.mode !== 'live') s.mode = 'local';
+  if (s.mode !== 'live' && s.mode !== 'none') s.mode = 'local';
   if (typeof s.roundId !== 'number') s.roundId = null;
   if (typeof s.code !== 'string') s.code = '';
   if (typeof s.roundStatus !== 'string') s.roundStatus = '';
+  // Migration and cleanup in one line: everyone who stored a round before
+  // 'none' existed has mode 'local', and most of them have an empty one they
+  // never meant to start. A local round with anything in it is left alone.
+  if (s.mode === 'local' && isEmptyRound(s)) s.mode = 'none';
   return s;
 }
 
@@ -989,7 +1025,27 @@ function load() {
 }
 
 function isLive() { return state.mode === 'live' && state.roundId !== null; }
+// Whether there is a round to show at all. The round view branches on this
+// before it branches on live-vs-local.
+function hasRound() { return state.mode !== 'none'; }
 function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+
+// Commit to a round on this phone. The one place 'none' becomes 'local', so
+// starting a round is now something the user does rather than something the
+// app assumes on their behalf.
+function startLocalRound() {
+  // The button is hidden whenever a round exists, so this is belt and braces —
+  // but it wipes state, and a stale click should not be able to destroy a round.
+  if (hasRound()) { goRoute('#/round'); return; }
+  state = blankState();
+  state.mode = 'local';
+  state.playDate = localToday();
+  save();
+  step = 'setup';
+  // Through the router rather than goStep: the stepper, the drawer entry and
+  // the header subtitle all change when a round comes into existence.
+  router();
+}
 
 function setCourse(v) { state.course = String(v || '').trim(); save(); }
 function setPlayDate(v) { state.playDate = String(v || '').trim(); save(); }
@@ -1042,13 +1098,20 @@ function closeDrawer() {
   btn.focus();
 }
 
+// Go to a route, re-running the router even when the hash doesn't change.
+// Assigning an unchanged location.hash fires no hashchange, so anything that
+// navigates to the view it is already on has to route by hand — which now
+// includes joining a live round, because joining happens ON the round view.
+function goRoute(hash) {
+  if ((location.hash || '#/') === hash) router();
+  else location.hash = hash;
+}
+
 // Navigate and close. Re-selecting the current view still closes, which is how
 // you back out of a mis-tap without hunting for the ×.
 function drawerGo(hash) {
   closeDrawer();
-  const current = location.hash || '#/';
-  if (current === hash) router();
-  else location.hash = hash;
+  goRoute(hash);
 }
 
 document.addEventListener('keydown', (e) => {
@@ -1071,7 +1134,7 @@ document.addEventListener('keydown', (e) => {
 let route = 'home';    // 'home' | 'round' | 'admin'
 let step = 'setup';    // active round sub-step when route === 'round'
 
-const ALL_SECTIONS = ['home','setup','scores','results','admin','stats'];
+const ALL_SECTIONS = ['home','choose','setup','scores','results','admin','stats'];
 
 function showSection(id) {
   for (const s of ALL_SECTIONS) {
@@ -1083,22 +1146,26 @@ function showSection(id) {
 function router() {
   const h = location.hash || '#/';
   if (h.startsWith('#/round')) route = 'round';
+  else if (h.startsWith('#/join')) route = 'join';
   else if (h.startsWith('#/admin')) route = 'admin';
   else if (h.startsWith('#/stats')) route = 'stats';
   else route = 'home';
 
-  // Drawer active state
+  // Drawer active state. 'join' isn't a drawer entry — it's where the Join
+  // button lands — but it belongs to the round, so it lights the same row.
   document.getElementById('nav-home').classList.toggle('active', route==='home');
-  document.getElementById('nav-round').classList.toggle('active', route==='round');
+  document.getElementById('nav-round').classList.toggle('active', route==='round' || route==='join');
   document.getElementById('nav-stats').classList.toggle('active', route==='stats');
   document.getElementById('nav-admin').classList.toggle('active', route==='admin');
 
-  // Round sub-tabs only visible inside the round view
-  document.getElementById('roundtabs').style.display = (route==='round') ? '' : 'none';
+  // Round sub-tabs are the workflow's stepper, so they belong to a round that
+  // exists — not to the chooser that offers to start one.
+  document.getElementById('roundtabs').style.display =
+    (route==='round' && hasRound()) ? '' : 'none';
 
   // Short on purpose: this is a label saying where you are, not a description.
   // The room it leaves on the line is what the live note beside it uses.
-  const subs = { home:'Home', round:'Run a round', admin:'Admin', stats:'Stats' };
+  const subs = { home:'Home', round:roundLabel(), join:'Join a round', admin:'Admin', stats:'Stats' };
   document.getElementById('phaseSub').textContent = subs[route];
   applyLiveChrome();  // after the line above: it rewrites the element's content
 
@@ -1115,11 +1182,34 @@ function router() {
     showSection('admin');
     refreshAdminAuth();
     loadRoster();
+  } else if (route === 'join' || !hasRound()) {
+    // Either the round view with no round in it, or the Join button's
+    // destination. Same section — the difference is only whether starting a
+    // round on this phone is still on offer.
+    showSection('choose');
+    document.getElementById('startRoundCard').style.display = hasRound() ? 'none' : '';
+    renderJoinCard();
+    loadLiveRounds();
   } else {
     // round: show the active step
     goStep(step);
   }
   render();
+}
+
+// What the round view is currently showing. Used for both the drawer entry and
+// the header, so the one place you go for a round always names which one you're
+// in — the ambiguity this replaced was a single "Run round" label covering all
+// three of these.
+function roundLabel() {
+  if (isLive()) return 'Live round';
+  if (hasRound()) return 'This round';
+  return 'Start a round';
+}
+
+// Keep the drawer's round entry in step with the round itself.
+function renderDrawerRound() {
+  document.getElementById('nav-round').textContent = roundLabel();
 }
 
 // Switch the active round sub-step (Setup/Scores/Results).
@@ -1830,13 +1920,15 @@ function setScore(id, val) {
 
 function resetRound() {
   if (isLive()) { leaveLiveRound(); return; } // live rounds are left, not cleared
-  if (!confirm('Clear all players and start a new round?')) return;
+  if (!confirm('Clear all players and end this round?')) return;
   // A fresh round must get a fresh clientKey, or finalizing it would replay
   // the previous round instead of saving this one.
   state = blankState();
   save();
   document.getElementById('rCourse').value = '';
-  goStep('setup');
+  // Back to the chooser, not into a new Setup: ending a round is not the same
+  // act as starting the next one, and conflating them is what this replaced.
+  router();
 }
 
 function poolTotals() {
@@ -2357,8 +2449,10 @@ function enterLiveMode(round, code) {
   };
   save();
   startLivePolling();
-  location.hash = '#/round';
-  goStep(round.status === 'open' ? 'setup' : 'scores');
+  step = round.status === 'open' ? 'setup' : 'scores';
+  // goRoute, not a bare hash assignment: you join from the round view, so the
+  // hash is usually already '#/round' and nothing would repaint.
+  goRoute('#/round');
 }
 
 // Leave the server round and put the stashed local round back exactly as it
@@ -2379,9 +2473,16 @@ function leaveLiveRound(silent, notice) {
   } catch (e) { /* unreadable backup — start clean rather than fail to leave */ }
   localStorage.removeItem(LOCAL_BACKUP_KEY);
   state = restored || blankState();
-  state.mode = 'local'; state.roundId = null; state.code = ''; state.roundStatus = '';
+  // Only a restored round is a round: with nothing stashed we land on 'none'
+  // rather than manufacturing an empty local round, which is what used to make
+  // leaving a live round feel like being dropped into a different one.
+  state.mode = restored ? 'local' : 'none';
+  state.roundId = null; state.code = ''; state.roundStatus = '';
   save();
   if (notice) joinNotice = notice;
+  // Home, always. Not every notice is actionable — "that round was discarded"
+  // has nothing to rejoin — so the caller that DOES want the code box
+  // (rejoinPrompt) navigates there itself.
   location.hash = '#/';
   router();
 }
@@ -2401,7 +2502,10 @@ async function loadLiveRounds() {
     if (!res.ok) return;
     liveRounds = await res.json();
   } catch (e) { /* offline — card falls back to whatever we last knew */ }
-  renderLiveCard();
+  // Both cards read `liveRounds`, and either can be on screen when this
+  // resolves. Repaint whichever is actually showing.
+  if (route === 'home') renderLiveCard();
+  else if (route === 'join' || (route === 'round' && !hasRound())) renderJoinCard();
 }
 
 // The LIVE badge, built once — it appears in three card titles and the markup
@@ -2423,16 +2527,47 @@ function renderLiveCard() {
     card.style.display = '';
     return;
   }
-  // Keep the card up with just the code box when we have something to say —
-  // e.g. the round we were in vanished, or a rotated code needs re-entering.
+  // Home advertises that a round is happening; the code box itself lives on the
+  // round view. Discovery and the entry point used to be the same card here,
+  // which is how joining ended up on a different page from starting.
   if (!liveRounds.length && !joinNotice) { card.style.display = 'none'; return; }
 
   // A joinable round is happening right now, so the card wears the live look
   // even before you're in one. With only a joinNotice and no round to join
   // there's nothing live to advertise, so it falls back to an ordinary card.
-  card.classList.toggle('live-surface', liveRounds.length > 0);
+  const anyLive = liveRounds.length > 0;
+  card.classList.toggle('live-surface', anyLive);
   title.innerHTML = (liveRounds.length > 1 ? 'Live rounds' : 'Live round') +
-    (liveRounds.length ? LIVE_PILL : '');
+    (anyLive ? LIVE_PILL : '');
+  const list = liveRounds.map(r => `
+    <div class="row">
+      <div style="flex:1">
+        <div class="name">${esc(r.course || 'Round')}</div>
+        <div class="meta">${esc(fmtDate(r.date))} · ${r.playerCount} checked in · ${r.status === 'open' ? 'check-in open' : 'scoring'}</div>
+      </div>
+    </div>`).join('');
+  // --danger is unreadable on the live surface, which is what --live-warn is for.
+  const notice = joinNotice
+    ? `<p class="hint" style="color:${anyLive ? 'var(--live-warn)' : 'var(--danger)'}">${esc(joinNotice)}</p>`
+    : '';
+  // #/join, not #/round: with a local round in progress the round view is that
+  // round, and this button has to reach the code box either way.
+  body.innerHTML = list + notice + `
+    <button class="btn" onclick="location.hash='#/join'">Join with a code</button>`;
+  card.style.display = '';
+}
+
+// ── The round view's join card, shown when no round is in progress ──
+
+function renderJoinCard() {
+  const card = document.getElementById('joinCard');
+  const title = document.getElementById('joinCardTitle');
+  const body = document.getElementById('joinCardBody');
+
+  // The live look only when there is actually something live to join; with no
+  // open round this is just a code box waiting for one.
+  card.classList.toggle('live-surface', liveRounds.length > 0);
+  title.innerHTML = 'Join a live round' + (liveRounds.length ? LIVE_PILL : '');
   const list = liveRounds.map(r => `
     <div class="row">
       <div style="flex:1">
@@ -2447,9 +2582,11 @@ function renderLiveCard() {
       placeholder="ABC234" aria-label="Round join code"
       onkeydown="onJoinCodeKey(event)">
     <p class="hint">Whoever opened the round has the code. Everyone in the group can use the same one.</p>
+    ${hasRound() && !isLive()
+      ? '<p class="hint">Your round on this phone is kept, and comes back when you leave the live one.</p>'
+      : ''}
     <button class="btn" id="joinBtn" onclick="joinLiveRound()">Join round</button>
     <div id="joinMsg" class="hint" style="display:none"></div>`;
-  card.style.display = '';
   if (joinNotice) showJoinMsg(joinNotice, true);
 }
 
@@ -2533,6 +2670,11 @@ function renderLiveBar() {
 // budget and locks the whole group out of the round.
 function rejoinPrompt() {
   leaveLiveRound(true, 'Enter the current code for this round.');
+  // router() by hand rather than goRoute: assigning the hash queues its event
+  // for later, and the code box has to exist NOW for the focus below to land.
+  // The queued hashchange re-runs the router harmlessly.
+  location.hash = '#/join';
+  router();
   const input = document.getElementById('joinCode');
   if (input) input.focus();
 }
@@ -3100,6 +3242,7 @@ async function ensureAdminChecked() {
 function applyLiveChrome() {
   const live = isLive();
   document.body.classList.toggle('live', live);
+  renderDrawerRound();  // same trigger: the drawer label tracks the round too
   const note = document.getElementById('headLive');
   const item = document.getElementById('drawerLive');
   if (live) {
@@ -3194,7 +3337,7 @@ function restoreScoreFocus(f) {
 
 // ─── Export / import an unsanctioned round ────────────────
 // A non-admin runs a round locally, exports it as a text blob, and sends it to
-// an admin who imports it, reviews in the Play tab, and finalizes. The blob is
+// an admin who imports it, reviews in the round view, and finalizes. The blob is
 // base64-encoded JSON of the round's players (incl. rosterId, needed for
 // finalize) + course. Versioned so we can evolve the format.
 const EXPORT_VERSION = 1;
@@ -3249,7 +3392,7 @@ function importRound() {
   if (!raw) { show('Paste an exported round first.', true); return; }
   // Importing replaces the round in progress, which in live mode would strand
   // the server round and its stashed local backup. Leave first, deliberately.
-  if (isLive()) { show('Leave the live round first (Run round → Setup), then import.', true); return; }
+  if (isLive()) { show('Leave the live round first, then import.', true); return; }
 
   let payload;
   try {
@@ -3274,9 +3417,12 @@ function importRound() {
   if (state.players.length > 0 &&
       !confirm('Loading this round will replace the round currently in progress. Continue?')) return;
 
-  // Load into local round state; admin reviews/finalizes in the Play tab.
+  // Load into local round state; admin reviews/finalizes in the round view.
   state = {
     ...blankState(),
+    // blankState() is 'none' now, and an imported round is very much a round —
+    // without this the round view would offer to start one instead of showing it.
+    mode: 'local',
     players: payload.players.map((p, i) => ({
       id: i + 1, rosterId: p.rosterId, name: p.name, tag: p.tag,
       ace: !!p.ace, ctp: !!p.ctp, score: (p.score == null ? null : p.score)
@@ -3290,7 +3436,7 @@ function importRound() {
     finalized: null
   };
   save();
-  show('Round loaded. Review it in the Play tab, then finalize.', false);
+  show('Round loaded. Review it in the round view, then finalize.', false);
   location.hash = '#/round';
   goStep('results');
 }
