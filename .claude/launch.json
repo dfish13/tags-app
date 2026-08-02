@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "tags-app",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8123"],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["scripts/dev.sh", "up"],
       "port": 8123
     }
   ]
