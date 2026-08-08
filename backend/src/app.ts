@@ -5,6 +5,7 @@ import { tagsRouter, tagsAdminRouter } from "./routes/tags.js";
 import { roundsRouter, roundsAdminRouter } from "./routes/rounds.js";
 import { standingsRouter } from "./routes/standings.js";
 import { statsRouter } from "./routes/stats.js";
+import { roundCodeRequired } from "./config.js";
 
 // Builds the Express app without binding a port, so tests can drive it in
 // process. index.ts is the entrypoint that actually listens.
@@ -30,6 +31,10 @@ export function createApp() {
   api.get("/config", (_req, res) => {
     res.json({
       leagueName: LEAGUE_NAME,
+      // Whether players are asked for a join code (see config.ts). The gate
+      // itself lives on the server; this only tells the frontend which join
+      // flow to paint, so a client that misses it is refused, not admitted.
+      requireRoundCode: roundCodeRequired(),
       theme: {
         primary: env("THEME_PRIMARY"),     // header, buttons
         accent: env("THEME_ACCENT"),       // tag badges, tab underline
@@ -62,9 +67,10 @@ export function createApp() {
 
   // Public read routes — no auth. Anyone can view players, tags, rounds, stats.
   //
-  // /rounds also carries the LIVE ROUND write routes, which are gated per-round
-  // by a join code instead of Cloudflare Access (see requireRoundCode). They
-  // sit here rather than under /admin precisely because Access would reject the
+  // /rounds also carries the LIVE ROUND write routes, which are scoped to one
+  // open round instead of being behind Cloudflare Access (see
+  // requireRoundCode), and optionally gated by a join code on top. They sit
+  // here rather than under /admin precisely because Access would reject the
   // players they exist for.
   api.use("/players", playersRouter);
   api.use("/tags", tagsRouter);

@@ -15,7 +15,7 @@ past rounds.
 - **New players mid-round** — an admin adding someone who isn't on the roster yet can create them and add them to the round in one step, after being shown every roster player who might already be them.
 - **Finalize** — computes tag assignments, snapshots them, and updates standings.
 - **Export/import** — run a round with no admin present, then hand it to an admin to review and finalize.
-- **Live rounds** — an admin opens a round with a join code; players at the course check themselves in and enter their own scores from their own phones.
+- **Live rounds** — an admin opens a round; players at the course check themselves in and enter their own scores from their own phones. Optionally gated by a four-letter join code (`REQUIRE_ROUND_CODE`).
 
 ## Architecture
 
@@ -35,12 +35,14 @@ Access comes in **three tiers**, not two:
 | Tier | Routes | Who |
 |---|---|---|
 | Public read | `GET /api/*` except `/api/admin/*` | anyone |
-| Round code | `/api/rounds/:id/*` writes | anyone holding the round's join code |
+| Live round | `/api/rounds/:id/*` writes | anyone, while that round is open — plus its join code if `REQUIRE_ROUND_CODE` is on |
 | Admin | `/api/admin/*` | Cloudflare Access email allowlist, re-checked against the `admins` table |
 
 The middle tier is what lets players score a live round with no admin present.
 It is a **write** tier without an identity, so it is deliberately narrow: it
-reaches only the entries of one round, and only while that round is open.
+reaches only the entries of one round, and only while that round is open. The
+join code is an extra lock on that tier, not what defines it — see
+[Live rounds](#live-rounds).
 
 ### Data model (6 tables)
 
@@ -110,31 +112,52 @@ and still be entering scores into the same round.
 
 **Running one** (Admin view, signed in):
 
-1. **Open a live round** — pick the date and course. The app mints a
-   four-letter join code and shows it large, because it gets read aloud on a
-   first tee. Letters only, and no `O I L` — digits and those glyphs are what
-   people mishear or have to spell out.
-2. **Read the code out**, or **Share join link** for anyone not standing there.
-   The link is `…/#/join/ABCD`, and a player who opens it with no round of
-   their own on the phone goes straight in without typing anything. The code
-   rides in the URL fragment, so it never reaches a server log.
-   Either way players check themselves in — picking their name from the roster
-   autofills the tag they currently hold — and enter their own scores as they
-   play.
+1. **Open a live round** — pick the date and course. It appears on every
+   player's Home as a live round they can tap into.
+2. **Share the join link** for anyone not standing there, or just tell them to
+   open the site. Players check themselves in — picking their name from the
+   roster autofills the tag they currently hold — and enter their own scores as
+   they play.
 3. **Close check-in** once everyone is in. Scores keep saving; nobody new can
    join. This is a separate step from finalizing because a late check-in
    changes the tag pool, and therefore what everyone else can win.
 4. **Finalize** from the scores step, as usual. Tags are redistributed and the
-   code stops working.
+   round stops accepting player writes.
 
-**New code** reissues the code and kills the old one — for when it has been
-read to the wrong group. **Revoke** closes the round to player writes without
-finalizing it. Both are on the same Admin card.
+**Close to players** shuts the round to check-ins and score edits without
+finalizing it; **Open to players** reopens it. Both are on the same Admin card.
+A round also closes itself on the code's expiry (12 hours by default, set per
+round with `expiresInHours`) — an open round is meant to last an afternoon, not
+sit writable for a week.
 
-The code is never in any API response a non-admin can read, and never in a URL
-— it travels in an `X-Round-Code` header, so it stays out of server logs and
-`Referer`. An admin who reloads mid-round reads it back from
-`GET /api/admin/rounds/:id/code`.
+### Join codes
+
+Whether a player has to type a code is one environment variable,
+`REQUIRE_ROUND_CODE` (see `.env.example`). It is **off** by default: a round is
+open for one afternoon, the URL isn't advertised, and an admin can close it at
+any moment, so the code bought less than the four letters cost everyone at the
+tee. With it off, anyone who reaches the site while a round is live can check
+in and edit that round's scores, including other players'. It still authorizes
+nothing beyond that one round's entries.
+
+Set `REQUIRE_ROUND_CODE=true` and restart to put the gate back. Nothing else
+changes — a round mints, rotates, revokes and expires a code either way, so the
+flip is one line in both directions. With the gate on:
+
+- The Admin card shows the code large, because it gets read aloud on a first
+  tee. Letters only, and no `O I L` — digits and those glyphs are what people
+  mishear or have to spell out.
+- **Share join link** hands over `…/#/join/ABCD`, and a player who opens it
+  with no round of their own on the phone goes straight in without typing
+  anything. The code rides in the URL fragment, so it never reaches a server
+  log. (The link works with the gate off too; the code is simply ignored.)
+- The code is never in any API response a non-admin can read, and never in a
+  URL — it travels in an `X-Round-Code` header, so it stays out of server logs
+  and `Referer`. An admin who reloads mid-round reads it back from
+  `GET /api/admin/rounds/:id/code`.
+- Wrong codes are counted per client IP and blocked after 10 in 15 minutes.
+
+### Saving scores
 
 Scores go through an **outbox** rather than straight to the network, so a write
 that fails isn't lost. The row reads *not saved*, and the queue retries with
@@ -147,14 +170,15 @@ the latest value.
 and the service worker never intercepts non-GET requests, so an offline write
 cannot be answered from cache. Two cases deliberately do *not* retry:
 
-- **A rejected or expired code.** Retrying would spend the shared per-IP failure
-  budget and lock the whole group out of the round. The queue stops and asks for
-  the current code instead.
+- **A round refusing the write** — closed to players, or (with the gate on) a
+  rejected or expired code. Retrying a bad code would spend the shared per-IP
+  failure budget and lock the whole group out, so the queue stops and sends the
+  player back to the join card instead.
 - **A round that has moved on** — finalized, or the entry deleted. Replaying
   can't fix that, so the write is dropped and the next poll reconciles the row.
 
 Leaving a live round is non-destructive — the round and its entries stay on the
-server, and the same code rejoins it. Anything still queued is discarded along
+server, and rejoining picks it back up. Anything still queued is discarded along
 with the round, so an unsent score never follows you into a different one.
 
 ## Adding a player who isn't on the roster
@@ -259,7 +283,7 @@ same fake data every time:
 | **App** | http://localhost:8123 — `index.html` served straight off the working tree, no cache. Edit, reload, see it. |
 | **API** | the same origin under `/api`, exactly as cloudflared path-routes it in production |
 | **Data** | 14 invented players, 3 finalized rounds, and one live round open for check-in |
-| **Join code** | `TAGS` — fixed, so the check-in flow is one field away |
+| **Join code** | not asked for by default. `REQUIRE_ROUND_CODE=true scripts/dev.sh up` exercises the gated flow; the fixture's code is always `TAGS` |
 | **Admin** | already signed in; the app's own Sign out / Sign in buttons work |
 
 Other commands:
@@ -352,6 +376,9 @@ To stand up a new league (e.g. "Mile Hi Tags"):
    - `LEAGUE_NAME` — shown in the header and page title (e.g. `Mile Hi Tags`).
    - `POSTGRES_PASSWORD` — a strong, unique password.
    - `ADMIN_EMAILS` — comma-separated admin emails (they get write access).
+   - *(Optional)* `REQUIRE_ROUND_CODE=true` — make players type a join code
+     before they can write to a live round. Off by default; see
+     [Join codes](#join-codes).
    - *(Optional)* `THEME_PRIMARY` / `THEME_ACCENT` / `THEME_SECONDARY` /
      `THEME_BG` / `THEME_FONT` — brand the app with your own colors and font.
      Leave blank to use the default look. Colors are CSS hex; the font is any
@@ -391,8 +418,9 @@ The reference instance runs on a Raspberry Pi behind a Cloudflare Tunnel:
 **The Access policy must stay scoped to `/api/admin/*`.** The rest of
 `/api/rounds/*` is reachable without an Access identity *on purpose* — that is
 what lets a player at the course check in and enter a score without being on
-the admin allowlist. Those routes are gated by the round's join code instead
-(see [Live rounds](#live-rounds)). Widening the Access policy to `/api/*` looks
+the admin allowlist. Those routes are scoped to one open round instead, and
+optionally to its join code (see [Live rounds](#live-rounds)). Widening the
+Access policy to `/api/*` looks
 like a tightening but breaks player check-in entirely.
 
 The API and database containers bind to `127.0.0.1` only — they're reachable

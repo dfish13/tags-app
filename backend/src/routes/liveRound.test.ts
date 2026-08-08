@@ -13,16 +13,24 @@ import {
   stopTestServer,
 } from "../test/helpers.js";
 
-// Integration tests for the live-round flow: the code-gated write path that
-// lets players at the course check in and enter scores without an admin.
+// Integration tests for the live-round flow: the write path that lets players
+// at the course check in and enter scores without an admin.
 // These need a database — see `npm test`.
+//
+// Everything here runs with REQUIRE_ROUND_CODE ON, which is NOT the shipped
+// default (see src/config.ts) — the gate is what most of this file is about,
+// and it can only be tested where it exists. The last describe turns it off
+// and covers the default config: what a code still does when nobody has to
+// type one, and what stops the gate's absence from widening the tier.
 
 before(async () => {
+  process.env.REQUIRE_ROUND_CODE = "true";
   await startTestServer();
 });
 // Both halves matter: the server holds a listening socket and the db holds a
 // pool of idle ones, and either keeps the event loop alive forever.
 after(async () => {
+  delete process.env.REQUIRE_ROUND_CODE;
   await stopTestServer();
   await closeDb();
 });
@@ -694,5 +702,173 @@ describe("admin round creation", () => {
       codes.add(r.joinCode!);
     }
     assert.equal(codes.size, 15);
+  });
+});
+
+// The shipped default: REQUIRE_ROUND_CODE unset. Players write without a code,
+// and the code keeps its OTHER job — marking a round open to players — so the
+// flag can be flipped back on a round that is already running.
+describe("with the code gate off", () => {
+  before(() => {
+    delete process.env.REQUIRE_ROUND_CODE;
+  });
+  after(() => {
+    process.env.REQUIRE_ROUND_CODE = "true";
+  });
+
+  test("/api/config tells the frontend which join flow to paint", async () => {
+    const off = await api("GET", "/api/config");
+    assert.equal(off.body.requireRoundCode, false);
+
+    process.env.REQUIRE_ROUND_CODE = "true";
+    const on = await api("GET", "/api/config");
+    assert.equal(on.body.requireRoundCode, true);
+    delete process.env.REQUIRE_ROUND_CODE;
+  });
+
+  test("check-in, scoring and removal need no code", async () => {
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+
+    const entry = await api("POST", `/api/rounds/${round.id}/checkin`, {
+      body: { playerId: rey.id, tagNumber: 12 },
+      ip: freshIp(),
+    });
+    assert.equal(entry.status, 201);
+
+    const scored = await api(
+      "PATCH",
+      `/api/rounds/${round.id}/entries/${entry.body.id}`,
+      { body: { score: 54 }, ip: freshIp() }
+    );
+    assert.equal(scored.status, 200);
+    assert.equal(scored.body.score, 54);
+
+    const removed = await api(
+      "DELETE",
+      `/api/rounds/${round.id}/entries/${entry.body.id}`,
+      { ip: freshIp() }
+    );
+    assert.equal(removed.status, 204);
+  });
+
+  test("a wrong code is ignored rather than counted against the caller", async () => {
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+    const ip = freshIp();
+    codeFailureLimiter.reset(ip);
+
+    // Well past the 10-failure budget: with nothing to guess there is nothing
+    // to rate limit, and a stale code in a bookmarked link must not lock its
+    // owner out of a round they're allowed to write to.
+    for (let i = 0; i < 12; i++) {
+      const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+        code: "ZZZZ",
+        body: { playerId: rey.id, tagNumber: 12 },
+        ip,
+      });
+      assert.equal(res.status, i === 0 ? 201 : 409, `attempt ${i}`);
+    }
+  });
+
+  test("revoking still closes the round to players", async () => {
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+    await api("POST", `/api/admin/rounds/${round.id}/code`, {
+      admin: true,
+      body: { action: "revoke" },
+    });
+
+    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+      body: { playerId: rey.id, tagNumber: 12 },
+      ip: freshIp(),
+    });
+    assert.equal(res.status, 403, "no code on the round means no player writes");
+  });
+
+  test("an expired code still closes the round to players", async () => {
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+    await db
+      .update(rounds)
+      .set({ codeExpiresAt: new Date(Date.now() - 1000) })
+      .where(eq(rounds.id, round.id));
+
+    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+      body: { playerId: rey.id, tagNumber: 12 },
+      ip: freshIp(),
+    });
+    assert.equal(res.status, 403, "the expiry is what bounds an open round");
+  });
+
+  test("a finalized round takes no more writes", async () => {
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+    await api("POST", `/api/rounds/${round.id}/checkin`, {
+      body: { playerId: rey.id, tagNumber: 12 },
+      ip: freshIp(),
+    });
+    await api("POST", `/api/admin/rounds/${round.id}/finalize`, { admin: true });
+
+    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+      body: { playerId: rey.id, tagNumber: 40 },
+      ip: freshIp(),
+    });
+    assert.equal(res.status, 409);
+  });
+
+  test("writes still reach one round's entries and nothing else", async () => {
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+    const entry = await api("POST", `/api/rounds/${round.id}/checkin`, {
+      body: { playerId: rey.id, tagNumber: 12 },
+      ip: freshIp(),
+    });
+    const other = await openRound({ date: "2026-07-29", course: "Elsewhere" });
+
+    const crossRound = await api(
+      "PATCH",
+      `/api/rounds/${other.id}/entries/${entry.body.id}`,
+      { body: { score: 1 }, ip: freshIp() }
+    );
+    assert.equal(crossRound.status, 404, "an entry belongs to its own round");
+
+    // The tier is still a tier: dropping the code doesn't hand a player the
+    // roster, tag status, or the finalize button.
+    const admin = await Promise.all([
+      api("POST", `/api/rounds/${round.id}/finalize`, { ip: freshIp() }),
+      api("POST", "/api/admin/rounds", {
+        body: { date: "2026-07-29" },
+        ip: freshIp(),
+      }),
+      api("POST", "/api/admin/players", {
+        body: { name: "Sneak", tagNumber: 99 },
+        ip: freshIp(),
+      }),
+      api("POST", `/api/admin/rounds/${round.id}/finalize`, { ip: freshIp() }),
+    ]);
+    assert.equal(admin[0].status, 404, "no player-facing finalize route");
+    for (const r of admin.slice(1)) {
+      assert.equal(r.status, 401, "admin routes still need an Access identity");
+    }
+  });
+
+  test("the code still isn't in any public response", async () => {
+    const round = await openRound();
+    for (const path of ["/api/rounds", "/api/rounds/live", `/api/rounds/${round.id}`]) {
+      const res = await api("GET", path);
+      const serialized = JSON.stringify(res.body);
+      assert.ok(!serialized.includes(round.joinCode!), `${path} leaked the code`);
+    }
+  });
+
+  test("a link's code is accepted, so old join links keep working", async () => {
+    const round = await openRound();
+    const res = await api("POST", "/api/rounds/join", {
+      body: { code: round.joinCode },
+      ip: freshIp(),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.id, round.id);
   });
 });

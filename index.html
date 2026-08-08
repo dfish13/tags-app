@@ -338,6 +338,22 @@
   }
   button.btn.danger:active { background: color-mix(in srgb, var(--danger) 22%, var(--tint)); }
 
+  /* Compact filled button that sits inside a .row. The full-width .btn is for
+     the bottom of a card; this is for a list where each line is its own action
+     — the live-round list, when joining one takes no code. */
+  button.rowbtn {
+    flex-shrink: 0;
+    padding: 9px 16px;
+    font-size: 15px;
+    font-weight: 700;
+    border: none;
+    border-radius: 8px;
+    background: var(--green);
+    color: var(--on-primary);
+    cursor: pointer;
+  }
+  button.rowbtn:active { background: var(--green-dark); }
+
   .row {
     display: flex;
     align-items: center;
@@ -554,6 +570,8 @@
     border: 1.5px solid rgba(84,242,242,.45);
   }
   .live-surface button.btn.secondary:active { background: rgba(84,242,242,.22); }
+  .live-surface button.rowbtn { background: var(--live); color: var(--live-deep); }
+  .live-surface button.rowbtn:active { background: color-mix(in srgb, var(--live) 75%, #000); }
   .live-surface input[type=text], .live-surface input[type=number], .live-surface input[type=date] {
     background: rgba(84,242,242,.07);
     border-color: rgba(84,242,242,.38);
@@ -913,13 +931,13 @@
       <button class="btn secondary" onclick="adminSignOut()">Sign out</button>
     </div>
 
-    <!-- Live round: open one, read out the code, run it. Shown when signed IN.
+    <!-- Live round: open one, share it, run it. Shown when signed IN.
          The form is static markup (not rendered) so a half-typed course name
-         survives a re-render; only the code panel below is rebuilt. -->
+         survives a re-render; only the panel below is rebuilt. -->
     <div class="card" id="liveAdminCard" style="display:none">
       <h2 id="liveAdminTitle">Live round</h2>
       <div id="liveOpenForm">
-        <p class="hint">Opens a round players join with a code, so everyone enters their own scores without an admin.</p>
+        <p class="hint">Opens a round players join from their own phones, so everyone enters their own scores without an admin.</p>
         <label for="lrDate">Date</label>
         <input type="date" id="lrDate">
         <label for="lrCourse">Course</label>
@@ -1367,8 +1385,8 @@ function addPlayer() {
 // Nothing is written to tag_holders here. Finalizing redistributes this round's
 // pool, and that is what actually takes the tag off the old holder (they end up
 // tagless, since a displaced holder's real tag is unknowable). Doing it at
-// check-in instead would let anyone holding the round code rewrite league
-// standings, which the code tier is deliberately too narrow for.
+// check-in instead would let anyone who joined the round rewrite league
+// standings, which the live-round tier is deliberately too narrow for.
 function confirmTagTakeover(tag, playerId) {
   const holder = roster.find(r => r.tagNumber === tag && r.id !== playerId);
   if (!holder) return true;
@@ -2445,19 +2463,32 @@ function showFinalizeMsg(text, isError) {
 }
 
 // ─── Live rounds ──────────────────────────────────────────
-// A live round lives on the server: everyone at the course holds the same
-// 6-character join code and writes their own check-in and score through
-// /api/rounds/*, no admin present. Local mode is untouched — joining stashes
-// the in-progress local round under LOCAL_BACKUP_KEY and leaving restores it
-// verbatim, so live mode is an extra path rather than a replacement.
+// A live round lives on the server: everyone at the course writes their own
+// check-in and score through /api/rounds/*, no admin present. Local mode is
+// untouched — joining stashes the in-progress local round under
+// LOCAL_BACKUP_KEY and leaving restores it verbatim, so live mode is an extra
+// path rather than a replacement.
 const LOCAL_BACKUP_KEY = 'tags-round-local-v1';
 const LIVE_POLL_MS = 15000;
+
+// Whether this deployment asks players for a join code — the server's
+// REQUIRE_ROUND_CODE, read from /api/config (see backend/src/config.ts). Two
+// join flows hang off it: tap the round you're at, or type four letters.
+//
+// Starts true and is corrected when config lands, deliberately in that
+// direction: the code box works against a server that doesn't want a code
+// (it's ignored), while the tap-to-join list against a server that DOES want
+// one gets a player refused at the door. It is only ever what to PAINT — the
+// gate itself is the server's, so a client that never hears is turned away,
+// not let in.
+let REQUIRE_CODE = true;
 
 // Mirrors the server's alphabet and length — keep in step with
 // backend/src/lib/roundCode.ts. Letters only, no O I L: codes get read aloud in
 // a parking lot, and dropping digits removes the "letter or number?" pause.
 // Normalizing here means an obvious typo is rejected without spending one of
-// the IP's ten wrong-code attempts.
+// the IP's ten wrong-code attempts. Still needed with REQUIRE_CODE off: a
+// '#/join/ABCD' link shared under the old setup keeps working.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ';
 const CODE_LENGTH = 4;
 
@@ -2477,12 +2508,13 @@ class LiveError extends Error {
 }
 
 // Player-side sibling of postAdmin/patchAdmin. Those send Access cookies; this
-// sends the round code in a header (never a query string, so codes stay out of
-// logs and Referer) and surfaces the API's `error` string, which is written to
-// be shown to the player as-is.
+// sends the round code, when there is one, in a header (never a query string,
+// so codes stay out of logs and Referer) and surfaces the API's `error` string,
+// which is written to be shown to the player as-is.
 async function liveFetch(path, opts) {
   const o = opts || {};
-  const headers = { 'X-Round-Code': state.code };
+  const headers = {};
+  if (state.code) headers['X-Round-Code'] = state.code;
   if (o.body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetch(API_BASE + path, {
     method: o.method || 'GET',
@@ -2581,9 +2613,11 @@ function liveErrorText(e) {
 function handleLiveError(e) {
   if (!(e instanceof LiveError)) return;
   if (e.status === 401 || e.status === 403) {
-    // The code is wrong, was rotated, or expired. Stop and re-prompt — never
-    // retry, or the per-IP failure budget locks the whole group out.
-    liveNotice = e.message + ' Ask for the current code.';
+    // The round has stopped accepting this client's writes — closed to
+    // players, expired, or (with the gate on) a code that's wrong or was
+    // rotated. Stop and re-prompt; never retry, or a bad code spends the
+    // per-IP failure budget and locks the whole group out.
+    liveNotice = e.message + (REQUIRE_CODE ? ' Ask for the current code.' : '');
     renderLiveBar();
   } else if (e.status === 404) {
     leaveLiveRound(true, 'That round is no longer on the server.');
@@ -2625,7 +2659,8 @@ function enterLiveMode(round, code) {
 // Leave the server round and put the stashed local round back exactly as it
 // was. Nothing is deleted server-side — the round and its entries stay put.
 function leaveLiveRound(silent, notice) {
-  if (!silent && !confirm('Leave this live round? Scores already saved stay on the server — you can rejoin with the same code.')) return;
+  if (!silent && !confirm('Leave this live round? Scores already saved stay on the server — you can rejoin' +
+    (REQUIRE_CODE ? ' with the same code.' : ' any time it’s still open.'))) return;
   stopLivePolling();
   liveSave = new Map();
   liveNotice = '';
@@ -2704,9 +2739,11 @@ function renderLiveCard() {
     card.style.display = '';
     return;
   }
-  // Home advertises that a round is happening; the code box itself lives on the
-  // round view. Discovery and the entry point used to be the same card here,
-  // which is how joining ended up on a different page from starting.
+  // Home advertises that a round is happening. Where a code is asked for, the
+  // box itself lives on the round view — discovery and the entry point used to
+  // be the same card here, which is how joining ended up on a different page
+  // from starting. With no code to type there's nothing to send anyone to, so
+  // the round is joined from the row it's listed on.
   if (!liveRounds.length && !joinNotice) { card.style.display = 'none'; return; }
 
   // A joinable round is happening right now, so the card wears the live look
@@ -2716,22 +2753,33 @@ function renderLiveCard() {
   card.classList.toggle('live-surface', anyLive);
   title.innerHTML = (liveRounds.length > 1 ? 'Live rounds' : 'Live round') +
     (anyLive ? LIVE_PILL : '');
-  const list = liveRounds.map(r => `
-    <div class="row">
-      <div style="flex:1">
-        <div class="name">${esc(r.course || 'Round')}</div>
-        <div class="meta">${esc(fmtDate(r.date))} · ${r.playerCount} checked in · ${r.status === 'open' ? 'check-in open' : 'scoring'}</div>
-      </div>
-    </div>`).join('');
   // --danger is unreadable on the live surface, which is what --live-warn is for.
   const notice = joinNotice
     ? `<p class="hint" style="color:${anyLive ? 'var(--live-warn)' : 'var(--danger)'}">${esc(joinNotice)}</p>`
     : '';
   // #/join, not #/round: with a local round in progress the round view is that
-  // round, and this button has to reach the code box either way.
-  body.innerHTML = list + notice + `
-    <button class="btn" onclick="location.hash='#/join'">Join with a code</button>`;
+  // round, and this button has to reach the code box either way. With no code
+  // to type there is no box to reach — the rows are the entry point, and a
+  // button under them would just be a second way to press the same thing.
+  body.innerHTML = liveRoundRows() + notice + (REQUIRE_CODE
+    ? `<button class="btn" onclick="location.hash='#/join'">Join with a code</button>`
+    : '');
   card.style.display = '';
+}
+
+// The list of joinable rounds, shared by Home's card and the round view's join
+// card. Where no code is asked for, each row carries its own Join button: that
+// IS the join flow, so the list stops being a read-only advertisement.
+function liveRoundRows() {
+  return liveRounds.map(r => `
+    <div class="row">
+      <div style="flex:1">
+        <div class="name">${esc(r.course || 'Round')}</div>
+        <div class="meta">${esc(fmtDate(r.date))} · ${r.playerCount} checked in · ${r.status === 'open' ? 'check-in open' : 'scoring'}</div>
+      </div>
+      ${REQUIRE_CODE ? ''
+        : `<button class="rowbtn" onclick="joinLiveRoundById(${r.id})">Join</button>`}
+    </div>`).join('');
 }
 
 // ── The round view's join card, shown when no round is in progress ──
@@ -2748,7 +2796,11 @@ function renderJoinCard() {
   // which stays reachable below. That escape hatch is the whole reason this
   // doesn't just hide the card: someone at a course with no signal can't load
   // the live list, and must still be able to type a code they were read.
-  if (route !== 'join' && !liveRounds.length) {
+  //
+  // With no code asked for there is no escape hatch to keep open — an empty
+  // list means nothing to join, on #/join as much as anywhere else, so the
+  // "nothing here" state is all there is to say.
+  if (!liveRounds.length && (!REQUIRE_CODE || route !== 'join')) {
     card.classList.remove('live-surface');
     title.textContent = 'Join a live round';
     const said = liveRoundsState === 'loading' ? 'Checking for a live round…'
@@ -2757,7 +2809,7 @@ function renderJoinCard() {
     body.innerHTML =
       `<p class="hint">${esc(said)}</p>` +
       (joinNotice ? `<p class="hint" style="color:var(--danger)">${esc(joinNotice)}</p>` : '') +
-      (liveRoundsState === 'loading' ? '' :
+      (liveRoundsState === 'loading' || !REQUIRE_CODE ? '' :
         `<button class="linkbtn" onclick="location.hash='#/join'">Have a code? Enter it anyway</button>`);
     card.style.display = '';
     return;
@@ -2773,14 +2825,10 @@ function renderJoinCard() {
   // #/join with nothing open this is just a code box waiting for one.
   card.classList.toggle('live-surface', liveRounds.length > 0);
   title.innerHTML = 'Join a live round' + (liveRounds.length ? LIVE_PILL : '');
-  const list = liveRounds.map(r => `
-    <div class="row">
-      <div style="flex:1">
-        <div class="name">${esc(r.course || 'Round')}</div>
-        <div class="meta">${esc(fmtDate(r.date))} · ${r.playerCount} checked in · ${r.status === 'open' ? 'check-in open' : 'scoring'}</div>
-      </div>
-    </div>`).join('');
-  body.innerHTML = list + `
+  const keptRound = hasRound() && !isLive()
+    ? '<p class="hint">Your round on this phone is kept, and comes back when you leave the live one.</p>'
+    : '';
+  body.innerHTML = liveRoundRows() + (REQUIRE_CODE ? `
     <label for="joinCode">Join code</label>
     <input type="text" id="joinCode" class="code-in" autocomplete="off"
       autocapitalize="characters" spellcheck="false" maxlength="6"
@@ -2788,10 +2836,10 @@ function renderJoinCard() {
       value="${esc(codeValue)}"
       onkeydown="onJoinCodeKey(event)">
     <p class="hint">Whoever opened the round has the code. Everyone in the group can use the same one.</p>
-    ${hasRound() && !isLive()
-      ? '<p class="hint">Your round on this phone is kept, and comes back when you leave the live one.</p>'
-      : ''}
-    <button class="btn" id="joinBtn" onclick="joinLiveRound()">Join round</button>
+    ${keptRound}
+    <button class="btn" id="joinBtn" onclick="joinLiveRound()">Join round</button>` : `
+    <p class="hint">Tap the round you’re playing. Everyone in the group enters their own scores.</p>
+    ${keptRound}`) + `
     <div id="joinMsg" class="hint" style="display:none"></div>`;
   if (joinNotice) showJoinMsg(joinNotice, true);
 }
@@ -2821,14 +2869,39 @@ function showJoinMsg(text, isError) {
   msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
 }
 
+// Join by round id, no code — the flow when this deployment doesn't ask for
+// one. The list endpoint carries no entries, so the round is read back in full
+// before entering it, exactly as joinOwnRound does.
+async function joinLiveRoundById(id) {
+  joinNotice = null; // they're acting on it now
+  showJoinMsg('Joining…', false);
+  try {
+    const res = await fetch(API_BASE + '/rounds/' + id);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new LiveError(res.status, data.error || ('HTTP ' + res.status), 0);
+    enterLiveMode(data, '');
+  } catch (e) {
+    const text = e instanceof LiveError ? liveErrorText(e)
+      : 'Couldn’t reach the server — check your signal and try again.';
+    // The join button that failed may be on Home's card, which has no message
+    // slot of its own, so this goes through the notice both cards render.
+    joinNotice = text;
+    if (route === 'home') renderLiveCard(); else renderJoinCard();
+  }
+}
+
 async function joinLiveRound() {
   const input = document.getElementById('joinCode');
   const btn = document.getElementById('joinBtn');
-  const code = normalizeCode(input ? input.value : '');
+  // The box, or the code from the link when there's no box to read — with
+  // REQUIRE_CODE off a '#/join/ABCD' link is the only way this runs.
+  const code = normalizeCode(input ? input.value : pendingJoinCode);
   joinNotice = null; // they're acting on it now
   if (!code) { showJoinMsg('A code is 4 letters, like ABCD.', true); return; }
 
-  btn.disabled = true;
+  // No button when there's no code box — an auto-join from a link is the only
+  // way here then, and there's nothing to double-tap.
+  if (btn) btn.disabled = true;
   showJoinMsg('Joining…', false);
   try {
     // The code goes in the body here, not a header: this is the discovery step
@@ -2848,7 +2921,7 @@ async function joinLiveRound() {
     showJoinMsg(e instanceof LiveError ? liveErrorText(e)
       : 'Couldn’t reach the server — check your signal and try again.', true);
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -2876,7 +2949,7 @@ function renderLiveBar() {
         (liveStatusText() + ' · ' + n + ' player' + (n === 1 ? '' : 's')))}</div>
     </div>
     ${liveNotice
-      ? '<button class="linkbtn" onclick="rejoinPrompt()">New code</button>'
+      ? `<button class="linkbtn" onclick="rejoinPrompt()">${REQUIRE_CODE ? 'New code' : 'Rejoin'}</button>`
       : '<button class="linkbtn" onclick="leaveLiveRound()">Leave</button>'}
     ${!liveNotice && adminEmail && state.roundStatus === 'open'
       ? '<button class="linkbtn" onclick="closeCheckin(state.roundId)">Close check-in</button>'
@@ -2884,11 +2957,14 @@ function renderLiveBar() {
   bar.style.display = '';
 }
 
-// Send the player back to the join card to type a fresh code. Deliberately not
-// an automatic retry: a rejected code retried in a loop burns the IP's failure
-// budget and locks the whole group out of the round.
+// Send the player back to the join card to get in again — with a fresh code
+// where one is asked for. Deliberately not an automatic retry: a rejected code
+// retried in a loop burns the IP's failure budget and locks the whole group
+// out of the round.
 function rejoinPrompt() {
-  leaveLiveRound(true, 'Enter the current code for this round.');
+  leaveLiveRound(true, REQUIRE_CODE
+    ? 'Enter the current code for this round.'
+    : 'Join the round again to carry on scoring.');
   // router() by hand rather than goRoute: assigning the hash queues its event
   // for later, and the code box has to exist NOW for the focus below to land.
   // The queued hashchange re-runs the router harmlessly.
@@ -2956,25 +3032,36 @@ function renderLiveAdmin() {
   const n = adminRound.playerCount || 0;
   const open = adminRound.status === 'open';
   const where = adminRound.course || 'Live round';
+  // The round's code doubles as its open/closed flag, so `code` still drives
+  // this panel with REQUIRE_CODE off — the buttons just stop talking about a
+  // code nobody has to type and talk about the round being open instead.
   panel.innerHTML = `
     <p class="hint">${esc(where)}${adminRound.date ? ' · ' + esc(fmtDate(adminRound.date)) : ''} ·
       ${open ? 'check-in open' : 'check-in closed · scoring'} · ${n} checked in</p>
-    <div class="code-out${code ? '' : ' none'}">${code
-      ? esc(code)
-      : 'No code — nobody can join or save a score until you issue one.'}</div>
+    <div class="code-out${code && REQUIRE_CODE ? '' : ' none'}">${
+      REQUIRE_CODE
+        ? (code ? esc(code) : 'No code — nobody can join or save a score until you issue one.')
+        : (code ? 'Open — players join from the app, no code needed.'
+                : 'Closed — nobody can join or save a score until you reopen it.')}</div>
     ${code ? `<p class="hint" style="text-align:center">${esc(codeExpiryText())}</p>` : ''}
     ${code ? '<button class="btn secondary" onclick="shareJoinLink()">Share join link</button>' : ''}
     <button class="btn" onclick="joinOwnRound()">Open this round</button>
     ${open ? '<button class="btn secondary" onclick="closeCheckin()">Close check-in</button>' : ''}
-    <button class="linkbtn" onclick="rotateLiveCode()">${code ? 'New code' : 'Issue a code'}</button>
-    ${code ? '<button class="linkbtn" onclick="revokeLiveCode()">Revoke code</button>' : ''}
+    ${REQUIRE_CODE
+      ? `<button class="linkbtn" onclick="rotateLiveCode()">${code ? 'New code' : 'Issue a code'}</button>
+         ${code ? '<button class="linkbtn" onclick="revokeLiveCode()">Revoke code</button>' : ''}`
+      : (code
+          ? '<button class="linkbtn" onclick="revokeLiveCode()">Close to players</button>'
+          : '<button class="linkbtn" onclick="rotateLiveCode()">Open to players</button>')}
     ${n === 0 ? '<button class="linkbtn" onclick="discardLiveRound()">Discard round</button>' : ''}`;
 }
 
-// The code as a link, for the group chat. The code is still read aloud at the
-// tee — this is the path for whoever isn't standing there yet.
+// The link for the group chat. With a code it carries it, so opening it joins
+// in one tap; without one it just points at the join card, where the round is
+// already listed. Either way it's the path for whoever isn't standing at the
+// tee to be told in person.
 function joinLinkFor(code) {
-  return SITE_ORIGIN + '/#/join/' + code;
+  return SITE_ORIGIN + '/#/join' + (REQUIRE_CODE && code ? '/' + code : '');
 }
 
 // Hand the link to the OS share sheet where there is one (that's the phone
@@ -2986,9 +3073,10 @@ async function shareJoinLink() {
   if (!code) return;
   const url = joinLinkFor(code);
   const where = adminRound && adminRound.course ? adminRound.course : 'the round';
+  const text = 'Join ' + where + (REQUIRE_CODE ? ' — code ' + code : '');
   if (navigator.share) {
     try {
-      await navigator.share({ title: 'Join ' + where, text: 'Join ' + where + ' — code ' + code, url });
+      await navigator.share({ title: 'Join ' + where, text, url });
       return;
     } catch (e) {
       if (e && e.name === 'AbortError') return;
@@ -3009,9 +3097,14 @@ function codeExpiryText() {
   const d = new Date(at);
   if (isNaN(d.getTime())) return '';
   const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  return d.getTime() <= Date.now()
-    ? 'Expired at ' + t + ' — issue a new code.'
-    : 'Read this out. Works until ' + t + '.';
+  if (d.getTime() <= Date.now()) {
+    return REQUIRE_CODE
+      ? 'Expired at ' + t + ' — issue a new code.'
+      : 'Closed at ' + t + ' — reopen it to carry on.';
+  }
+  return REQUIRE_CODE
+    ? 'Read this out. Works until ' + t + '.'
+    : 'Open until ' + t + '.';
 }
 
 async function openLiveRound() {
@@ -3027,7 +3120,9 @@ async function openLiveRound() {
     adminRound = { id: round.id, date: round.date, course: round.course, status: round.status, playerCount: 0 };
     adminCode = { joinCode: round.joinCode, codeExpiresAt: round.codeExpiresAt };
     document.getElementById('lrCourse').value = '';
-    showLiveAdminMsg('Round open — read the code out.', false);
+    showLiveAdminMsg(REQUIRE_CODE
+      ? 'Round open — read the code out.'
+      : 'Round open — it’s on everyone’s Home now.', false);
     renderLiveAdmin();
   } catch (e) {
     liveAdminError(e);
@@ -3036,23 +3131,32 @@ async function openLiveRound() {
   }
 }
 
+// Mints a fresh code, which is also what reopens a closed round — the code is
+// what marks a round open to players whether or not one has to be typed.
 async function rotateLiveCode() {
   const had = !!(adminCode && adminCode.joinCode);
-  if (had && !confirm('Issue a new code? The current one stops working immediately, and anyone still scoring has to be read the new one.')) return;
+  if (had && REQUIRE_CODE &&
+      !confirm('Issue a new code? The current one stops working immediately, and anyone still scoring has to be read the new one.')) return;
   try {
     const r = await (await postAdmin('/admin/rounds/' + adminRound.id + '/code', { action: 'rotate' })).json();
     adminCode = { joinCode: r.joinCode, codeExpiresAt: r.codeExpiresAt };
-    showLiveAdminMsg(had ? 'New code issued — the old one is dead.' : 'Code issued — players can join.', false);
+    showLiveAdminMsg(REQUIRE_CODE
+      ? (had ? 'New code issued — the old one is dead.' : 'Code issued — players can join.')
+      : 'Open again — players can join and score.', false);
     renderLiveAdmin();
   } catch (e) { liveAdminError(e); }
 }
 
 async function revokeLiveCode() {
-  if (!confirm('Revoke the code? Nobody can join or save a score until you issue a new one. The round and the scores already in it stay put.')) return;
+  if (!confirm(REQUIRE_CODE
+    ? 'Revoke the code? Nobody can join or save a score until you issue a new one. The round and the scores already in it stay put.'
+    : 'Close this round to players? Nobody can join or save a score until you reopen it. The round and the scores already in it stay put.')) return;
   try {
     const r = await (await postAdmin('/admin/rounds/' + adminRound.id + '/code', { action: 'revoke' })).json();
     adminCode = { joinCode: r.joinCode, codeExpiresAt: r.codeExpiresAt };
-    showLiveAdminMsg('Code revoked. Issue a new one to reopen the round.', false);
+    showLiveAdminMsg(REQUIRE_CODE
+      ? 'Code revoked. Issue a new one to reopen the round.'
+      : 'Closed to players. Reopen it when you want scores again.', false);
     renderLiveAdmin();
   } catch (e) { liveAdminError(e); }
 }
@@ -3082,16 +3186,23 @@ async function closeCheckin(roundId) {
   }
 }
 
-// Drop the admin into the round exactly where a player who typed the code
-// lands — there is no separate admin scoring path to keep in step.
+// Drop the admin into the round exactly where a joining player lands — there
+// is no separate admin scoring path to keep in step.
 async function joinOwnRound() {
   const code = adminCode && adminCode.joinCode;
-  if (!code) { showLiveAdminMsg('Issue a code first — the round needs one to be joinable.', true); return; }
+  // A round with no code is closed to player writes either way, so this is the
+  // same check in both configs — only what to call it changes.
+  if (!code) {
+    showLiveAdminMsg(REQUIRE_CODE
+      ? 'Issue a code first — the round needs one to be joinable.'
+      : 'Open the round to players first — it isn’t joinable while closed.', true);
+    return;
+  }
   try {
     // Read the round back: the list endpoint carries no entries.
     const res = await fetch(API_BASE + '/rounds/' + adminRound.id);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    enterLiveMode(await res.json(), code);
+    enterLiveMode(await res.json(), REQUIRE_CODE ? code : '');
   } catch (e) {
     showLiveAdminMsg('Could not open the round: ' + e.message, true);
   }
@@ -3449,7 +3560,7 @@ function applyFinalizedRound(round) {
 async function finalizeLiveRound() {
   const btn = document.getElementById('finalizeBtn');
   if (state.players.length === 0) { showFinalizeMsg('Nobody is checked in yet.', true); return; }
-  if (!confirm('Finalize this round? Tags are redistributed and the join code stops working.')) return;
+  if (!confirm('Finalize this round? Tags are redistributed and the round stops accepting scores.')) return;
 
   const who = await fetchAdminIdentity();
   if (!who) { showFinalizeMsg('Admin sign-in required — redirecting…', true); setTimeout(adminSignIn, 800); return; }
@@ -4604,8 +4715,8 @@ async function setRoundStatus(id, status) {
   // Both directions change the tag pool, which is why closing check-in was
   // already a separate step from finalizing.
   const ask = reopening
-    ? 'Reopen check-in? Anyone with the code can join again — a late arrival ' +
-      'changes the tag pool, and therefore what everyone else can win.'
+    ? 'Reopen check-in? Players can join again — a late arrival changes the ' +
+      'tag pool, and therefore what everyone else can win.'
     : 'Close check-in? Nobody new can join, but everyone already in can still enter scores.';
   if (!confirm(ask)) return;
   try {
@@ -4634,7 +4745,7 @@ async function deleteRound(id) {
     ? '\n\nThis round is FINALIZED. Deleting it removes it from history but does ' +
       'NOT undo the tag assignments it made — standings will keep the result of a ' +
       'round that no longer exists.'
-    : '\n\nIts ' + n + ' entr' + (n === 1 ? 'y' : 'ies') + ' go with it, and the code stops working.';
+    : '\n\nIts ' + n + ' entr' + (n === 1 ? 'y' : 'ies') + ' go with it, and anyone still in it is dropped.';
   if (!confirm('Delete the round on ' + label + '?' + warning)) return;
 
   try {
@@ -4738,8 +4849,9 @@ document.getElementById('pTag').addEventListener('keydown', e => { if (e.key ===
 document.getElementById('aName').addEventListener('keydown', e => { if (e.key === 'Enter') adminAddPlayer(); });
 document.getElementById('aTag').addEventListener('keydown', e => { if (e.key === 'Enter') adminAddPlayer(); });
 
-// Load per-deployment site config (league name) so one codebase serves any
-// league. Falls back to the built-in default if the API is unreachable.
+// Load per-deployment site config (league name, theme, whether players are
+// asked for a join code) so one codebase serves any league. Falls back to the
+// built-in defaults if the API is unreachable.
 async function loadConfig() {
   try {
     const res = await fetch(API_BASE + '/config');
@@ -4749,7 +4861,15 @@ async function loadConfig() {
       document.getElementById('leagueTitle').textContent = '🥏 ' + cfg.leagueName;
       document.title = cfg.leagueName;
     }
+    // Absent (an older API) reads as "required" — the safe direction, since a
+    // code box works against a server that doesn't want one.
+    REQUIRE_CODE = cfg.requireRoundCode !== false;
     if (cfg.theme) applyTheme(cfg.theme);
+    // This resolves after the first paint, so whichever join surface is up was
+    // drawn for the wrong flow if the deployment differs from the default.
+    if (route === 'home') renderLiveCard();
+    else if (route === 'join' || (route === 'round' && !hasRound())) renderJoinCard();
+    else if (route === 'admin' && adminRound) renderLiveAdmin();
   } catch (e) { /* offline / no API — keep the default title + theme */ }
 }
 
