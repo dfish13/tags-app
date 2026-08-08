@@ -4,8 +4,9 @@ import { db } from "../db/client.js";
 import { tagHolders, tags, players } from "../db/schema.js";
 
 // Public read route, mounted at /standings. Current tag leaderboard: who
-// holds each tag right now (from tag_holders, updated on round finalize),
-// joined to tag numbers and player names, ordered by tag number ascending.
+// holds each tag right now, joined to tag numbers and player names, ordered by
+// tag number ascending. tag_holders is derived — see lib/tagHolders.ts — so
+// this reflects the whole event log in date order, not just the last write.
 export const standingsRouter = Router();
 
 standingsRouter.get("/", async (_req, res) => {

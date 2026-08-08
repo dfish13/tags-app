@@ -27,7 +27,12 @@ export const tags = pgTable("tags", {
 });
 
 // Current tag assignment: who holds each tag right now.
-// Authoritative because only sanctioned-round finalization updates it.
+//
+// DERIVED, not authoritative. Every row here is produced by replaying the
+// event log — finalized rounds in date order, plus tag_adjustments — through
+// replayTagHolders() (lib/tagHolders.ts). Nothing else may write to this
+// table: a direct write survives only until the next replay, which is any
+// round finalize, round delete, or manual tag change.
 export const tagHolders = pgTable("tag_holders", {
   tagId: integer("tag_id")
     .primaryKey()
@@ -35,7 +40,35 @@ export const tagHolders = pgTable("tag_holders", {
   playerId: integer("player_id")
     .references(() => players.id)
     .notNull(),
-  since: timestamp("since").defaultNow().notNull(),
+  // The DATE the tag was won or issued, not when the row was written — the
+  // replay that produced this row could have run months later.
+  since: date("since").notNull(),
+});
+
+// Manual tag assignments: a player given a tag by an admin rather than by
+// winning it in a round. The other half of the event log.
+//
+// These exist because the log has to explain tags that no round accounts for
+// — the league's original issue, a player joining mid-season, a correction
+// after someone traded tags in the parking lot. Keeping them OUT of
+// tag_holders is what lets that table be rebuilt from scratch without losing
+// them.
+//
+// Ordered against rounds by effectiveDate, so an adjustment beats every round
+// dated before it and loses to every round after — a correction made today is
+// not meant to freeze a player's tag through next week's round.
+export const tagAdjustments = pgTable("tag_adjustments", {
+  id: serial("id").primaryKey(),
+  playerId: integer("player_id")
+    .references(() => players.id, { onDelete: "cascade" })
+    .notNull(),
+  tagId: integer("tag_id")
+    .references(() => tags.id)
+    .notNull(),
+  effectiveDate: date("effective_date").notNull(),
+  // Free text for the audit trail — why someone's tag was set by hand.
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // One record per sanctioned tags-round event.

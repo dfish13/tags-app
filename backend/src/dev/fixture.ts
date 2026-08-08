@@ -8,6 +8,7 @@ import {
   players,
   roundEntries,
   rounds,
+  tagAdjustments,
   tagHolders,
   tags,
 } from "../db/schema.js";
@@ -151,7 +152,7 @@ async function main() {
   // Same wipe the test suite uses: RESTART IDENTITY so ids are identical on
   // every run, CASCADE for the FK web.
   await db.execute(
-    sql`truncate table ${admins}, ${players}, ${tags}, ${tagHolders}, ${rounds}, ${roundEntries} restart identity cascade`
+    sql`truncate table ${admins}, ${players}, ${tags}, ${tagHolders}, ${tagAdjustments}, ${rounds}, ${roundEntries} restart identity cascade`
   );
   await db
     .insert(tags)
