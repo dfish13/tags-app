@@ -4,6 +4,7 @@ import { db } from "../db/client.js";
 import { rounds } from "../db/schema.js";
 import { normalizeCode } from "../lib/roundCode.js";
 import { createFailureLimiter, clientIp } from "../lib/rateLimit.js";
+import { roundCodeRequired } from "../config.js";
 
 // Gate for the LIVE ROUND write routes (/api/rounds/:id/...).
 //
@@ -11,14 +12,21 @@ import { createFailureLimiter, clientIp } from "../lib/rateLimit.js";
 // Cloudflare Access — that is deliberate: players at the course have no Access
 // identity, and Access would bounce them at the edge before Express ever saw
 // the request. Which is exactly why these routes may never live under
-// /api/admin/*, and why what the code authorizes is kept narrow:
+// /api/admin/*, and why what this gate authorizes is kept narrow:
 //
-//   * ONE round — the code is checked against the round in the URL, so a code
-//     for round 7 does nothing to round 8.
+//   * ONE round — everything is checked against the round in the URL, so a
+//     code for round 7 does nothing to round 8.
 //   * Check-in and entry edits ONLY. Never finalize, never the roster, never
 //     tag status. Those stay behind requireAdmin.
 //   * Never a finalized round — the code is cleared on finalize, and status is
 //     re-checked here regardless.
+//   * Never a round that isn't open to players — a round with no code (never
+//     issued, or revoked) and an expired code are both refused.
+//
+// The last two hold whether or not a code is REQUIRED (see config.ts): with
+// REQUIRE_ROUND_CODE off, every check below still runs except the two that
+// read what the caller supplied. The code keeps its other job — it is what
+// marks a round open to players — so revoking one still shuts the round.
 //
 // Brute force is handled by counting failed attempts per client IP.
 
@@ -40,13 +48,19 @@ export async function requireRoundCode(
   res: Response,
   next: NextFunction
 ) {
+  // One read for the whole request: a flag that changed mid-handler would let
+  // a request pass one check under one rule and the next under the other.
+  const gated = roundCodeRequired();
+
   const ip = clientIp(req);
-  const limited = failures.isLimited(ip);
-  if (limited) {
-    res.set("Retry-After", String(limited.retryAfterSec));
-    return res.status(429).json({
-      error: "Too many incorrect codes. Try again in a few minutes.",
-    });
+  if (gated) {
+    const limited = failures.isLimited(ip);
+    if (limited) {
+      res.set("Retry-After", String(limited.retryAfterSec));
+      return res.status(429).json({
+        error: "Too many incorrect codes. Try again in a few minutes.",
+      });
+    }
   }
 
   const roundId = Number(req.params.id);
@@ -60,7 +74,7 @@ export async function requireRoundCode(
   const supplied = normalizeCode(
     req.header("X-Round-Code") ?? (req.body as { code?: unknown })?.code
   );
-  if (!supplied) {
+  if (gated && !supplied) {
     // Malformed input isn't a guess at a specific code, but it IS how a naive
     // brute-forcer looks, so it counts.
     failures.record(ip);
@@ -74,19 +88,27 @@ export async function requireRoundCode(
     return res.status(409).json({ error: "This round is finalized" });
   }
   if (!round.joinCode) {
-    return res
-      .status(403)
-      .json({ error: "This round is not open for check-in" });
+    // Covers scoring as well as check-in — this route set is both, and an
+    // admin can close a round to players part-way through.
+    return res.status(403).json({ error: "This round is closed to players" });
   }
   if (round.codeExpiresAt && round.codeExpiresAt.getTime() <= Date.now()) {
-    return res.status(403).json({ error: "This round's code has expired" });
+    return res.status(403).json({
+      error: gated
+        ? "This round's code has expired"
+        : "This round is closed to players",
+    });
   }
-  if (round.joinCode !== supplied) {
-    failures.record(ip);
-    return res.status(401).json({ error: "That code doesn't match this round" });
+  if (gated) {
+    if (round.joinCode !== supplied) {
+      failures.record(ip);
+      return res
+        .status(401)
+        .json({ error: "That code doesn't match this round" });
+    }
+    failures.reset(ip);
   }
 
-  failures.reset(ip);
   (req as RoundCodeRequest).round = round;
   next();
 }
