@@ -741,7 +741,7 @@
 
     <div class="card">
       <h2>Current tag standings</h2>
-      <p class="hint">Who holds each tag right now, updated after every finalized round. Tap your name to pin your tag to the top.</p>
+      <p class="hint">Who holds each tag right now, worked out from every finalized round in date order. Tap your name to pin your tag to the top.</p>
       <input type="search" id="standingsSearch" autocomplete="off" placeholder="Search players…" aria-label="Search players" oninput="renderStandings()">
       <div id="standingsList"><div class="empty">Loading…</div></div>
     </div>
@@ -3837,6 +3837,15 @@ async function loadStandings() {
 // Tag movement vs the most recent finalized round: participants' delta is
 // incoming − assigned (positive = climbed). Non-participants get no arrow —
 // their tag didn't move.
+//
+// The arrow describes a ROUND, but it's drawn on a STANDINGS row, and standings
+// are replayed from the whole event log — so the two can disagree. Give someone
+// a tag by hand and the last round's climb is still sitting there next to their
+// new number, pointing the wrong way. So a delta is only shown while the player
+// is still ON the tag that round gave them; once anything moves them, the round
+// no longer describes where they are and the arrow is dropped rather than
+// recomputed. Recomputing would mean asking the backend what they held before,
+// which only the adjustment log knows.
 let movement = null; // Map playerId → delta, or null until loaded
 
 async function loadMovement() {
@@ -3849,9 +3858,13 @@ async function loadMovement() {
     const detRes = await fetch(API_BASE + '/rounds/' + latest.id);
     if (!detRes.ok) return;
     const det = await detRes.json();
+    // standingsRows is always fresher than this: loadStandings sets it, then
+    // calls us.
+    const currentTag = new Map(standingsRows.map(r => [r.playerId, r.tagNumber]));
     movement = new Map();
     for (const e of det.entries || []) {
-      if (e.incomingNumber != null && e.assignedNumber != null) {
+      if (e.incomingNumber != null && e.assignedNumber != null
+          && currentTag.get(e.playerId) === e.assignedNumber) {
         movement.set(e.playerId, e.incomingNumber - e.assignedNumber);
       }
     }
@@ -3872,7 +3885,7 @@ function standingsDeltaHtml(playerId) {
 function renderStandings() {
   const el = document.getElementById('standingsList');
   if (standingsRows.length === 0) {
-    el.innerHTML = '<div class="empty">No tags assigned yet. Finalize a round to populate standings.</div>';
+    el.innerHTML = '<div class="empty">No tags assigned yet. Add players to the roster, or finalize a round.</div>';
     return;
   }
   const q = (document.getElementById('standingsSearch').value || '').trim().toLowerCase();
@@ -4554,6 +4567,9 @@ async function saveRosterEdit(id) {
     }
     rosterEditId = null;
     await loadRoster();
+    // A tag change displaces whoever held it, so it moves two rows, not one.
+    // Guarded: the standings card only exists on #/home.
+    if (document.getElementById('standingsList')) loadStandings();
   } catch (e) {
     if (String(e.message).includes('Failed to fetch')) {
       showRosterEditMsg(id, 'Sign-in required — redirecting…', true);
@@ -4571,7 +4587,13 @@ async function deleteRosterPlayer(id, name) {
       method: 'DELETE', credentials: 'include'
     });
     if (res.status === 401 || res.status === 403) { setTimeout(adminSignIn, 300); return; }
-    if (res.status === 204) { rosterEditId = null; await loadRoster(); return; }
+    if (res.status === 204) {
+      rosterEditId = null;
+      await loadRoster();
+      // Their tag goes back into circulation, so standings lose a row.
+      if (document.getElementById('standingsList')) loadStandings();
+      return;
+    }
     const body = await res.json().catch(() => ({}));
     showRosterEditMsg(id, body.error || ('HTTP ' + res.status), true);
   } catch (e) {
@@ -4601,9 +4623,12 @@ function showRosterEditMsg(id, text, isError) {
 //    tag assignments — POST /admin/rounds/:id/finalize is what does the real
 //    work. A round faked into that state has no assigned tags, so it shows up
 //    in history having redistributed nothing.
-//  - Un-finalizing. Finalizing already moved tag_holders, so reopening a round
-//    leaves it able to redistribute a second time from a pool that's been
-//    spent, silently rewriting who holds what.
+//  - Un-finalizing. The API only flips the status; it does not clear the tags
+//    the round already handed out, so the round keeps counting toward standings
+//    while looking reopened, and finalizing again would redistribute a pool
+//    that's already been spent. (Deleting the round IS safe now — standings are
+//    derived, so removing it puts the tags back. Un-finalize could be made safe
+//    the same way by clearing assignedTagId; that's a separate decision.)
 //
 // So the only status move offered is the open ⇄ scoring toggle.
 
@@ -4672,8 +4697,9 @@ function renderAdminRounds() {
           ? `<button class="btn secondary" onclick="setRoundStatus(${r.id}, '${r.status === 'open' ? 'scoring' : 'open'}')">${
                r.status === 'open' ? 'Close check-in' : 'Reopen check-in'
              }</button>`
-          : `<p class="hint">Finalized — the date and course are still editable, but the
-             tag assignments are locked. Finalizing is a one-way step.</p>`}
+          : `<p class="hint">Finalized — who won which tag is locked, but the date still
+             decides where this round sits against every other one. Changing it can
+             move current standings.</p>`}
         <button class="btn danger" onclick="deleteRound(${r.id})">Delete round</button>
         <div id="round-msg-${r.id}" class="hint" style="display:none"></div>
       </div>`;
@@ -4738,13 +4764,14 @@ async function deleteRound(id) {
   if (!round) return;
   const label = fmtDate(round.date) + (round.course ? ' · ' + round.course : '');
   const n = round.playerCount || 0;
-  // A finalized round has already moved tag_holders. Deleting it removes the
-  // record but does NOT put the tags back, so standings keep the result of a
-  // round that no longer exists. Say that before, not after.
+  // Standings are derived from the finalized rounds, so deleting one really
+  // does undo it — every tag it moved falls back to whatever the rounds before
+  // it say. That's a bigger change than "one round disappears", and it can move
+  // people who never played this round, so say it before rather than after.
   const warning = round.status === 'finalized'
-    ? '\n\nThis round is FINALIZED. Deleting it removes it from history but does ' +
-      'NOT undo the tag assignments it made — standings will keep the result of a ' +
-      'round that no longer exists.'
+    ? '\n\nThis round is FINALIZED. Deleting it undoes the tags it handed out — ' +
+      'standings go back to what the remaining rounds say, which may move several ' +
+      'players.'
     : '\n\nIts ' + n + ' entr' + (n === 1 ? 'y' : 'ies') + ' go with it, and anyone still in it is dropped.';
   if (!confirm('Delete the round on ' + label + '?' + warning)) return;
 
@@ -4775,11 +4802,16 @@ async function deleteRound(id) {
 // Everything downstream of a round edit. The course typeahead and League Home's
 // history are both derived from GET /rounds, so a date or course change has to
 // reach them or they keep showing the old value until a reload.
+//
+// Standings too: they're derived from every finalized round in date order, so
+// editing a date or deleting a round can move holders who have nothing to do
+// with the round being edited. Guarded because the card only exists on #/home.
 async function afterRoundChange() {
   await loadAdminRounds();
   setCoursesFrom(adminRounds);
   loadLiveAdmin();
   loadHistory();
+  if (document.getElementById('standingsList')) loadStandings();
 }
 
 function showRoundMsg(id, text, isError) {

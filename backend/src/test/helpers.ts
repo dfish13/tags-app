@@ -10,6 +10,7 @@ import {
   rounds,
   roundEntries,
   tagHolders,
+  tagAdjustments,
 } from "../db/schema.js";
 
 // Test support. DB-backed tests run locally against a throwaway Postgres in a
@@ -52,7 +53,7 @@ export async function stopTestServer() {
 // --test-concurrency=1 for exactly this reason; don't drop it.
 export async function resetDb() {
   await db.execute(
-    sql`truncate table ${admins}, ${players}, ${tags}, ${tagHolders}, ${rounds}, ${roundEntries} restart identity cascade`
+    sql`truncate table ${admins}, ${players}, ${tags}, ${tagHolders}, ${tagAdjustments}, ${rounds}, ${roundEntries} restart identity cascade`
   );
   await db.insert(tags).values(
     Array.from({ length: 300 }, (_, i) => ({ number: i + 1 }))

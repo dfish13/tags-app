@@ -50,10 +50,42 @@ join code is an extra lock on that tier, not what defines it — see
 |---|---|
 | `players` | League roster |
 | `tags` | The pool of tag numbers (1–300) |
-| `tag_holders` | Who currently holds each tag |
+| `tag_holders` | Who currently holds each tag — **derived**, see below |
+| `tag_adjustments` | Tags assigned by hand rather than won in a round |
 | `rounds` | Each sanctioned round |
 | `round_entries` | One row per player per round (incoming tag, score, assigned tag) |
 | `admins` | Email allowlist for write access |
+
+### Standings are replayed, not written
+
+`tag_holders` is a cache. It is rebuilt from scratch — by `replayTagHolders()`
+in `backend/src/lib/tagHolders.ts` — after every write that could change it, and
+nothing else is allowed to write it.
+
+The inputs are an ordered log: finalized rounds sorted by the **date the round
+was played**, plus `tag_adjustments` for tags handed out by an admin rather than
+won. Each event is applied with the same rules the app has always used, so the
+result is what you'd have gotten by entering everything in chronological order.
+
+That means:
+
+- **Rounds can be entered in any order.** Backfilling last season's rounds today
+  no longer overwrites current standings.
+- **Deleting a finalized round undoes it.** The tags it moved fall back to what
+  the rounds before it say — which can move players who weren't in that round.
+- **Correcting a finalized round's date moves it in the log**, and so can change
+  who holds what.
+
+Adjustments are dated, not permanent overrides. `PATCH /api/admin/players/:id/tag`
+records one dated **today**: it beats every round played up to now, and loses to
+the next round the player enters — an override that outranked all future rounds
+would freeze their tag forever. Tags issued when a player is **created** are
+dated at the beginning of time instead, because that is a starting point rather
+than a correction: any round they go on to play should decide their tag, whether
+it's played next week or backfilled from last March.
+
+`npm run tags:replay -- --dry-run` prints what a rebuild would change without
+writing anything.
 
 ## The round view
 
@@ -217,12 +249,12 @@ right there.
 
 ## Bringing a tag the app thinks someone else has
 
-`tag_holders` only moves when a round is **finalized**, so it goes stale the
-moment a tag changes hands outside a sanctioned round — someone quits and passes
-their tag on, or a casual round redistributes tags nobody entered. Turning up
-holding a tag the app has against another player is therefore routine, not an
-error. **The physical tag in someone's hand is the truth**, so both paths say
-whose tag the record thinks it is, and then let it through.
+Standings only know about finalized rounds and hand-made adjustments, so they go
+stale the moment a tag changes hands outside a sanctioned round — someone quits
+and passes their tag on, or a casual round redistributes tags nobody entered.
+Turning up holding a tag the app has against another player is therefore
+routine, not an error. **The physical tag in someone's hand is the truth**, so
+both paths say whose tag the record thinks it is, and then let it through.
 
 They differ in *when* the old holder loses it:
 
@@ -232,12 +264,16 @@ They differ in *when* the old holder loses it:
   tag is genuinely unknowable. Deliberate: check-in is a **join-code** write, and
   that tier reaches one round's entries and nothing else. Letting it edit
   `tag_holders` would let anyone holding the code rewrite league standings.
-- **Creating a new roster player** has to record a holding, so it takes the tag
+- **Creating a new roster player** has to record a tag for them, so it takes it
   immediately, and the response names who was `displaced` so the app can say so.
   That is an **admin** write, and it matches what `PATCH /api/admin/players/:id/tag`
   has always done. It needs `takeTag: true`, which the app sends only after the
   admin has been shown the holder's name and agreed — so a mistyped number in the
-  Admin view's roster form still bounces with a plain `409`.
+  Admin view's roster form still bounces with a plain `409`. One edge: because
+  the new player's tag is recorded at the beginning of time, taking a tag whose
+  current holder **won it in a round** won't stick until the new player plays a
+  round of their own — the round outranks it. Use `PATCH .../tag` afterwards if
+  it needs to move now.
 
 The `409` carries a structured `heldBy` alongside the message, which is what
 lets the check-in flow offer "reissue it anyway" instead of dead-ending an admin

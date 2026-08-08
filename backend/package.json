@@ -17,6 +17,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx src/db/seed.ts",
     "db:seed:dev": "tsx src/dev/fixture.ts",
+    "tags:replay": "tsx src/db/replayTags.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {

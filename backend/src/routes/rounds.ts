@@ -2,7 +2,7 @@ import { Router } from "express";
 import { eq, and, inArray, desc, asc, sql, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "../db/client.js";
-import { rounds, roundEntries, tags, tagHolders, players } from "../db/schema.js";
+import { rounds, roundEntries, tags, players } from "../db/schema.js";
 import {
   requireRoundCode,
   codeFailureLimiter,
@@ -10,6 +10,7 @@ import {
 } from "../middleware/requireRoundCode.js";
 import { generateCode, normalizeCode } from "../lib/roundCode.js";
 import { clientIp } from "../lib/rateLimit.js";
+import { replayTagHolders } from "../lib/tagHolders.js";
 
 // Columns of `rounds` safe to serve publicly. Spelled out rather than
 // `select()` because the table carries `join_code` (and `client_key`), and
@@ -453,7 +454,6 @@ roundsAdminRouter.post("/complete", async (req, res, next) => {
         .values({ date, course, status: "finalized", clientKey })
         .returning();
 
-      const now = new Date();
       const assignments = assignTags(input);
       await tx.insert(roundEntries).values(
         assignments.map(({ entry, assignedNumber }) => ({
@@ -467,22 +467,11 @@ roundsAdminRouter.post("/complete", async (req, res, next) => {
         }))
       );
 
-      // Release every participant's current holding first, then take the new
-      // ones — same invariant as the step-by-step finalize (one tag each).
-      await tx.delete(tagHolders).where(inArray(tagHolders.playerId, playerIds));
-      for (const { entry, assignedNumber } of assignments) {
-        await tx
-          .insert(tagHolders)
-          .values({
-            tagId: tagIdByNumber.get(assignedNumber)!,
-            playerId: entry.playerId,
-            since: now,
-          })
-          .onConflictDoUpdate({
-            target: tagHolders.tagId,
-            set: { playerId: entry.playerId, since: now },
-          });
-      }
+      // The entries above ARE the record of what this round did; tag_holders
+      // is derived from them and every other round, in date order. A round
+      // backfilled from last season lands in its own place in the log rather
+      // than overwriting today's standings.
+      await replayTagHolders(tx);
 
       return { roundId: round.id, replayed: false };
     });
@@ -651,22 +640,32 @@ roundsAdminRouter.patch("/:id", async (req, res) => {
   if (req.body?.course !== undefined)
     patch.course = req.body.course ? String(req.body.course).trim() : null;
   if (req.body?.status !== undefined) patch.status = req.body.status;
-  const [updated] = await db
-    .update(rounds)
-    .set(patch)
-    .where(eq(rounds.id, id))
-    .returning();
+  const updated = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(rounds)
+      .set(patch)
+      .where(eq(rounds.id, id))
+      .returning();
+    // The date is this round's position in the event log, so correcting it can
+    // move standings — a round moved from March to today now beats everything
+    // in between. Course is inert.
+    if (row && patch.date !== undefined) await replayTagHolders(tx);
+    return row;
+  });
   if (!updated) return res.status(404).json({ error: "Round not found" });
   res.json(updated);
 });
 
-// Delete a round (entries cascade).
+// Delete a round (entries cascade). Replaying afterwards is what puts the tags
+// back: with the round's assignments gone from the log, every tag it moved
+// falls back to whatever the preceding events say.
 roundsAdminRouter.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
-  const [deleted] = await db
-    .delete(rounds)
-    .where(eq(rounds.id, id))
-    .returning();
+  const deleted = await db.transaction(async (tx) => {
+    const [row] = await tx.delete(rounds).where(eq(rounds.id, id)).returning();
+    if (row) await replayTagHolders(tx);
+    return row;
+  });
   if (!deleted) return res.status(404).json({ error: "Round not found" });
   res.status(204).end();
 });
@@ -730,16 +729,22 @@ roundsAdminRouter.patch("/:id/entries/:entryId", async (req, res) => {
   res.json(updated);
 });
 
-// Remove an entry.
+// Remove an entry. If it carried an assignment, replaying drops that from the
+// log and the tag falls back to its prior event — the rest of the round's
+// assignments stand, since they're recorded per entry.
 roundsAdminRouter.delete("/:id/entries/:entryId", async (req, res) => {
   const roundId = Number(req.params.id);
   const entryId = Number(req.params.entryId);
-  const [deleted] = await db
-    .delete(roundEntries)
-    .where(
-      and(eq(roundEntries.id, entryId), eq(roundEntries.roundId, roundId))
-    )
-    .returning();
+  const deleted = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .delete(roundEntries)
+      .where(
+        and(eq(roundEntries.id, entryId), eq(roundEntries.roundId, roundId))
+      )
+      .returning();
+    if (row && row.assignedTagId !== null) await replayTagHolders(tx);
+    return row;
+  });
   if (!deleted) return res.status(404).json({ error: "Entry not found" });
   res.status(204).end();
 });
@@ -789,36 +794,17 @@ roundsAdminRouter.post("/:id/finalize", async (req, res, next) => {
       const assignments = assignTags(entries);
       const tagIdByNumber = new Map(entries.map((e) => [e.tagNumber, e.incomingTagId]));
 
-      const now = new Date();
-
-      // Release every participating player's current tag holding(s) first, so
-      // that after reassignment each player holds exactly one tag. Without
-      // this, a player's pre-round tag can linger if it isn't part of this
-      // round's redistributed pool, leaving them holding two tags.
-      const participantIds = assignments.map((a) => a.entry.playerId);
-      await tx
-        .delete(tagHolders)
-        .where(inArray(tagHolders.playerId, participantIds));
-
+      // Snapshot each assignment on its entry. This is the durable record —
+      // tag_holders is rebuilt from it below, and from every other finalized
+      // round, in round-DATE order.
       for (const { entry, assignedNumber } of assignments) {
-        const assignedTagId = tagIdByNumber.get(assignedNumber)!;
-
-        // Snapshot the assignment on the entry.
         await tx
           .update(roundEntries)
-          .set({ assignedTagId })
+          .set({ assignedTagId: tagIdByNumber.get(assignedNumber)! })
           .where(eq(roundEntries.id, entry.id));
-
-        // Set the current tag holder. onConflict covers a tag previously held
-        // by a NON-participant (whose row we didn't just delete).
-        await tx
-          .insert(tagHolders)
-          .values({ tagId: assignedTagId, playerId: entry.playerId, since: now })
-          .onConflictDoUpdate({
-            target: tagHolders.tagId,
-            set: { playerId: entry.playerId, since: now },
-          });
       }
+
+      await replayTagHolders(tx);
 
       // Clearing the code is what actually ends player write access: the gate
       // refuses a round with no code, and the number returns to the pool for
