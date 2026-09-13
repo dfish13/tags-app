@@ -45,7 +45,64 @@ const ROSTER = [
 // Past rounds, oldest first. `play` is [roster index, score] — a null score is
 // a DNF, which the redistribution sends to the back of the tag pool. Scores are
 // hand-picked rather than random so the standings look the same on every run.
+//
+// The list spans about six months on purpose. Home's round history is windowed
+// to this month (or the five most recent, whichever is more) behind a month
+// picker, and neither the cutoff nor the picker is clickable on a fixture that
+// only holds one or two months. The five oldest rounds are spaced 35 days apart
+// — more than any month is long, so they always land in five distinct months
+// however the calendar falls.
+//
+// The recent cluster is dated in days, so how many of them count as "this
+// month" depends on the day you load the fixture: from the 13th on there are
+// five and Home defaults to "This month", earlier in a month there are fewer
+// and it defaults to the five most recent. Both are real states of the app.
 const HISTORY = [
+  {
+    daysAgo: 180,
+    course: "Marrow Hill",
+    play: [
+      [2, 58], [6, 59], [9, 61], [0, 63], [12, 66], [4, 70],
+    ] as [number, number | null][],
+    acePool: [2, 6, 9],
+    ctp: [6],
+  },
+  {
+    daysAgo: 145,
+    course: "Sable Woods",
+    play: [
+      [8, 54], [1, 56], [11, 57], [3, 59], [7, 62], [13, 65], [5, 68],
+    ] as [number, number | null][],
+    acePool: [8, 1, 11, 3],
+    ctp: [11],
+  },
+  {
+    daysAgo: 110,
+    course: "Anvil Creek",
+    play: [
+      [0, 52], [10, 55], [4, 56], [12, 60], [2, 63], [9, null],
+    ] as [number, number | null][],
+    acePool: [0, 10, 4],
+    ctp: [0],
+  },
+  {
+    daysAgo: 75,
+    course: "Tamarack Loop",
+    play: [
+      [5, 51], [3, 53], [13, 54], [6, 58], [1, 61], [8, 62], [11, 67],
+    ] as [number, number | null][],
+    acePool: [5, 3, 13, 6],
+    ctp: [3],
+  },
+  {
+    daysAgo: 40,
+    course: "Kestrel Flats",
+    play: [
+      [7, 50], [0, 52], [2, 55], [10, 57], [4, 59], [12, 64], [9, 69],
+    ] as [number, number | null][],
+    acePool: [7, 0, 2, 10],
+    ctp: [7],
+  },
   {
     daysAgo: 21,
     course: "Cedar Hollow",
@@ -75,6 +132,42 @@ const HISTORY = [
     ] as [number, number | null][],
     acePool: [5, 0, 13, 3],
     ctp: [13],
+  },
+  {
+    daysAgo: 5,
+    course: "Bramble Ridge",
+    play: [
+      [3, 49], [10, 51], [0, 54], [7, 55], [12, 58], [2, 60], [6, 63],
+    ] as [number, number | null][],
+    acePool: [3, 10, 0, 7],
+    ctp: [10],
+  },
+  {
+    daysAgo: 3,
+    course: "Hollowbrook",
+    play: [
+      [13, 48], [5, 51], [8, 52], [1, 56], [11, 59], [4, 61], [9, 64],
+    ] as [number, number | null][],
+    acePool: [13, 5, 8, 1],
+    ctp: [5],
+  },
+  {
+    daysAgo: 2,
+    course: "Wexford Commons",
+    play: [
+      [0, 50], [3, 51], [12, 55], [6, 57], [10, 58], [2, 62],
+    ] as [number, number | null][],
+    acePool: [0, 3, 12],
+    ctp: [12],
+  },
+  {
+    daysAgo: 1,
+    course: "Pinch Gap",
+    play: [
+      [7, 47], [0, 50], [5, 53], [13, 54], [8, 56], [11, 60], [4, 65], [9, null],
+    ] as [number, number | null][],
+    acePool: [7, 0, 5, 13, 8],
+    ctp: [0],
   },
 ];
 

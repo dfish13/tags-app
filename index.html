@@ -237,6 +237,20 @@
     color: var(--text);
   }
   input:focus { outline: 2px solid var(--primary-ink); border-color: var(--primary-ink); }
+  /* The app's only <select>. Sized to its content rather than stretched like
+     the inputs above, so a picker sitting under a heading doesn't read as a
+     field waiting to be filled in. The native popup follows the color-scheme
+     property, which the theme sets from the background's brightness. */
+  select {
+    max-width: 100%;
+    padding: 8px 10px;
+    font-size: 15px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--field);
+    color: var(--text);
+  }
+  select:focus { outline: 2px solid var(--primary-ink); border-color: var(--primary-ink); }
   /* Nudged off --muted toward the ink: --muted is tuned against --card, but a
      placeholder sits on the lighter --field, where plain muted drops under AA.
      Some of these carry real information (the join-code format, for one).
@@ -749,6 +763,7 @@
     <div class="card">
       <h2 id="historyTitle">Round history</h2>
       <p class="hint" id="historyHint">Past finalized rounds. Tap one to see its tag assignments.</p>
+      <select id="historyMonthSel" aria-label="Show rounds from" onchange="setHistoryMonth(this.value)" style="display:none;margin-bottom:10px"></select>
       <div id="historyList"><div class="empty">Loading…</div></div>
     </div>
   </section>
@@ -3945,37 +3960,98 @@ function pinMe(playerId) {
 }
 
 // League Home: history of finalized rounds. Tap one to expand its assignments.
+//
+// The list is windowed. A league that has run for a few seasons otherwise
+// pushes everything below it off the page, and the rounds people actually want
+// are the recent ones. The default window is whichever is LARGER of "this
+// month" and "the five most recent", so a quiet month still has something to
+// tap and a busy one isn't cut off partway through itself. Nothing is hidden
+// outright — every older round is a month away in the picker.
+const HISTORY_MIN = 5;
+
 let historyOpenId = null;
+let historyRounds = [];   // finalized rounds, newest first — what renders
+let historyMonth = null;  // null = the default window, else a chosen 'YYYY-MM'
 
 async function loadHistory() {
   const el = document.getElementById('historyList');
+  if (!el) return;
   try {
     const res = await fetch(API_BASE + '/rounds');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const all = await res.json();
-    const finalized = all.filter(r => r.status === 'finalized');
-    if (finalized.length === 0) {
-      el.innerHTML = '<div class="empty">No finalized rounds yet.</div>';
-      return;
-    }
-    el.innerHTML = finalized.map(r => {
-      const label = `${fmtDate(r.date)}${r.course ? ' · ' + esc(r.course) : ''} · ${r.playerCount} player${r.playerCount===1?'':'s'}`;
-      const detail = historyOpenId === r.id ? `<div id="history-detail-${r.id}" class="hist-detail"><div class="hint">Loading…</div></div>` : '';
-      return `
-        <div class="row selectable" onclick="toggleHistory(${r.id})" style="justify-content:space-between">
-          <div class="name">${label}</div>
-          <div class="meta">${historyOpenId === r.id ? '▲' : '▼'}</div>
-        </div>${detail}`;
-    }).join('');
-    if (historyOpenId != null) loadHistoryDetail(historyOpenId);
+    historyRounds = all.filter(r => r.status === 'finalized');
+    renderHistory();
   } catch (e) {
     el.innerHTML = '<div class="empty">Could not load history (' + esc(e.message) + ').</div>';
   }
 }
 
+// The 'YYYY-MM' a round belongs to. Sliced off the string rather than parsed,
+// for the same reason fmtDate() is: Date() would shift a UTC midnight back a
+// day and file a round under the wrong month at the start of one.
+function roundMonth(r) { return String(r.date).slice(0, 7); }
+
+// This month's rounds if there are at least HISTORY_MIN of them, otherwise the
+// HISTORY_MIN most recent wherever they fell.
+function defaultHistoryWindow() {
+  const inMonth = historyRounds.filter(r => roundMonth(r) === localToday().slice(0, 7));
+  return inMonth.length >= HISTORY_MIN ? inMonth : historyRounds.slice(0, HISTORY_MIN);
+}
+
+function renderHistory() {
+  const el = document.getElementById('historyList');
+  if (!el) return;
+  // The chosen month can stop existing under us — an admin deletes the last
+  // round in it, or edits that round onto a different date. Fall back to the
+  // default window rather than render a card with nothing in it.
+  if (historyMonth && !historyRounds.some(r => roundMonth(r) === historyMonth)) {
+    historyMonth = null;
+  }
+  renderHistoryMonths();
+  if (historyRounds.length === 0) {
+    el.innerHTML = '<div class="empty">No finalized rounds yet.</div>';
+    return;
+  }
+  const shown = historyMonth
+    ? historyRounds.filter(r => roundMonth(r) === historyMonth)
+    : defaultHistoryWindow();
+  el.innerHTML = shown.map(r => {
+    const label = `${fmtDate(r.date)}${r.course ? ' · ' + esc(r.course) : ''} · ${r.playerCount} player${r.playerCount===1?'':'s'}`;
+    const detail = historyOpenId === r.id ? `<div id="history-detail-${r.id}" class="hist-detail"><div class="hint">Loading…</div></div>` : '';
+    return `
+        <div class="row selectable" onclick="toggleHistory(${r.id})" style="justify-content:space-between">
+          <div class="name">${label}</div>
+          <div class="meta">${historyOpenId === r.id ? '▲' : '▼'}</div>
+        </div>${detail}`;
+  }).join('');
+  // No-op when the open round isn't in this window; the box just isn't there.
+  if (historyOpenId != null) loadHistoryDetail(historyOpenId);
+}
+
+// The month picker. Months come out of an already date-sorted list, so they
+// are newest-first for free. Hidden below two of them: with a single month the
+// default window is the whole history and there is nothing to choose.
+function renderHistoryMonths() {
+  const sel = document.getElementById('historyMonthSel');
+  if (!sel) return;
+  const months = [...new Set(historyRounds.map(roundMonth))];
+  if (months.length < 2) { sel.style.display = 'none'; return; }
+  const inMonth = historyRounds.filter(r => roundMonth(r) === localToday().slice(0, 7));
+  const dflt = inMonth.length >= HISTORY_MIN ? 'This month' : HISTORY_MIN + ' most recent';
+  sel.innerHTML = `<option value="">${dflt}</option>` + months.map(m =>
+    `<option value="${m}"${m === historyMonth ? ' selected' : ''}>${fmtMonth(m)}</option>`).join('');
+  sel.style.display = '';
+}
+
+function setHistoryMonth(m) {
+  historyMonth = m || null;
+  renderHistory();
+}
+
 function toggleHistory(id) {
   historyOpenId = (historyOpenId === id) ? null : id;
-  loadHistory();
+  renderHistory();
 }
 
 async function loadHistoryDetail(id) {
@@ -4007,6 +4083,14 @@ function fmtDate(d) {
   const [y,m,day] = String(d).slice(0,10).split('-');
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return `${months[+m-1]} ${+day}, ${y}`;
+}
+
+// Format a 'YYYY-MM' for the round-history month picker.
+function fmtMonth(m) {
+  const [y, mo] = String(m).split('-');
+  const months = ['January','February','March','April','May','June',
+    'July','August','September','October','November','December'];
+  return `${months[+mo - 1]} ${y}`;
 }
 
 // ─── Stats: tag-history bump chart ────────────────────────
