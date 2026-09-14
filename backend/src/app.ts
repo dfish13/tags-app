@@ -14,8 +14,8 @@ export function createApp() {
   app.use(express.json());
 
   // Everything is served under /api so the cloudflared tunnel can path-route
-  // tags.duncanfish.co/api/* → this API, and tags.duncanfish.co/* → the
-  // static site (a separate service on :8080). Same origin, no CORS.
+  // <host>/api/* → this API, and <host>/* → the static site (a separate
+  // service on :8080). Same origin, no CORS.
   const api = express.Router();
 
   api.get("/health", (_req, res) => {
