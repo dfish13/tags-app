@@ -547,6 +547,15 @@
   /* Selected chips double as the chart legend: the dot wears the series color
      (set inline by JS); the text stays in ink per dataviz rules. */
   .chip .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
+  /* Two controls in one chip, so it can't be a <button> itself: the name opens
+     that player's page, the x takes them off the chart. Both are bare buttons
+     inheriting the chip's type, so the seam is invisible. */
+  .chip .go, .chip .x {
+    background: none; border: none; padding: 0;
+    font: inherit; color: inherit; cursor: pointer;
+  }
+  .chip .go { display: inline-flex; align-items: center; gap: 7px; }
+  .chip .go:hover { text-decoration: underline; }
   .chip .x { color: var(--muted); font-weight: 700; margin-left: 2px; }
   .sug .sugtag { color: var(--muted); font-size: 12px; margin-left: 6px; }
   .range-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -564,7 +573,7 @@
 
   /* "Your tag" pinned banner on the standings list */
   .me-banner {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
     padding: 10px; margin: 10px 0 4px;
     background: color-mix(in srgb, var(--accent) 22%, var(--tint));
     border: 1.5px solid var(--accent); border-radius: 10px;
@@ -585,7 +594,7 @@
      The selector is (0,3,0) deliberately. `.num.rainbow` alone only ties with
      `.row .num` and `.me-banner .num` — both of which set `background` — and a
      tie is broken by source order, which is far too easy to undo later. */
-  .row .num.rainbow, .me-banner .num.rainbow {
+  .row .num.rainbow, .me-banner .num.rainbow, .p-head .num.rainbow {
     border: 2px solid transparent;
     background:
       linear-gradient(var(--bubble-fill), var(--bubble-fill)) padding-box,
@@ -639,6 +648,55 @@
   .stats-table th:first-child, .stats-table td:first-child { text-align: left; }
   .stats-table td { font-weight: 700; }
   .stats-table td.held { color: var(--muted); font-weight: 400; }
+
+  /* ── Player page (#/player/<id>) ── */
+  .p-head { display: flex; align-items: center; gap: 12px; }
+  /* Same bubble as a standings row, sized up. It sets `background`, so it has
+     to be listed in the rainbow selector above or the gradient is painted and
+     then overwritten — the exact collision that made the ring look broken. */
+  .p-head .num {
+    min-width: 48px; height: 48px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--green); color: var(--on-primary);
+    border-radius: 10px; font-weight: 800; font-size: 20px;
+    --bubble-fill: var(--green);
+  }
+  .p-head h2 { margin: 0; }
+  .p-head .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .p-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  /* Pill vocabulary, same as the range buttons. Pinned wears the accent the
+     me-banner wears, so the two read as the same fact in two places. */
+  .pinbtn {
+    border: 1.5px solid var(--line); background: var(--field); color: var(--muted);
+    border-radius: 20px; padding: 5px 12px; font-size: 13px; font-weight: 600;
+    font-family: var(--font); cursor: pointer;
+  }
+  .pinbtn.on {
+    border-color: var(--accent); color: var(--text);
+    background: color-mix(in srgb, var(--accent) 22%, var(--tint));
+  }
+  /* 2x2 on a phone, one row once there's width for it. */
+  .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 14px; }
+  @media (min-width: 520px) { .tiles { grid-template-columns: repeat(4, 1fr); } }
+  .tile { background: var(--soft); border-radius: 9px; padding: 9px 10px; }
+  .tile .k {
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .tile .v {
+    font-size: 20px; font-weight: 800; line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+  }
+  .tile .n { font-size: 11px; color: var(--muted); }
+  /* The in -> out column, the one that reads as a story. */
+  .stats-table td .in { color: var(--muted); font-weight: 400; }
+  .stats-table .dnf { color: var(--muted); font-weight: 400; }
+  /* A tag that changed between rounds: expected in this league (untracked
+     tags matches), so it's annotated rather than left looking like a bug. */
+  .stats-table tr.gap td {
+    font-weight: 400; font-size: 11px; color: var(--muted);
+    text-align: center; padding: 3px 0; border-bottom: none;
+  }
 
   /* ── Live rounds ──────────────────────────────────────────
      Everything a live round owns shares one look: the dark neon "live surface".
@@ -817,7 +875,11 @@
     <button class="drawer-item" id="nav-home" onclick="drawerGo('#/')">Home</button>
     <!-- Label is rewritten by renderDrawerRound() to name the round you're in. -->
     <button class="drawer-item" id="nav-round" onclick="drawerGo('#/round')">Start a round</button>
-    <button class="drawer-item" id="nav-stats" onclick="drawerGo('#/stats')">Stats</button>
+    <!-- Named for what the section actually is, not for the category it sits
+         in. "Stats" read as a heading that ought to contain a player's page
+         too; this section is the tag-history chart and nothing else, and a
+         player's page is an entity you reach from a row, not a destination. -->
+    <button class="drawer-item" id="nav-stats" onclick="drawerGo('#/stats')">Tag history</button>
   </div>
   <div class="drawer-foot">
     <button class="drawer-admin" id="nav-admin" onclick="drawerGo('#/admin')">Admin</button>
@@ -1124,6 +1186,27 @@
       <div id="statsTable" class="stats-table-wrap" style="display:none"></div>
     </div>
   </section>
+
+  <!-- PLAYER -->
+  <!-- One player's record. Separate from Stats on purpose: the tag chart is a
+       comparison instrument (eight players, sticky colors) and this is a
+       single subject, so they want different furniture. The link between them
+       runs both ways - Compare below, and a tap on a standings row or a name
+       on the chart's legend. -->
+  <section id="view-player" style="display:none">
+    <div class="card" id="playerCard">
+      <div class="p-head" id="playerHead"></div>
+      <div class="tiles" id="playerTiles"></div>
+      <div class="p-actions" id="playerActions" style="display:none">
+        <button class="pinbtn" id="playerPin" onclick="togglePlayerMe()"></button>
+        <button class="linkbtn" id="playerCompare" onclick="playerCompare()">Compare on the tag chart →</button>
+      </div>
+    </div>
+    <div class="card" id="playerRoundsCard" style="display:none">
+      <h2>Round by round</h2>
+      <div class="stats-table-wrap" id="playerRounds"></div>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -1299,12 +1382,13 @@ document.addEventListener('keydown', (e) => {
 
 // ─── Routing ──────────────────────────────────────────────
 // Top-level views via hash routes: #/ = League Home, #/round = the round
-// workflow, #/join = join a live one, #/admin = roster admin, #/stats = stats.
+// workflow, #/join = join a live one, #/admin = roster admin, #/stats = stats,
+// #/player/<id> = one player's record.
 //
 // The round's step is in the hash too (#/round/setup, #/round/scores) rather
 // than in a variable, so Back goes back a step instead of leaving the round,
 // and a reload lands where you were rather than always on Setup.
-let route = 'home';    // 'home' | 'round' | 'join' | 'admin' | 'stats'
+let route = 'home';    // 'home' | 'round' | 'join' | 'admin' | 'stats' | 'player'
 let step = 'setup';    // active round step when route === 'round'
 
 // A code carried in the link — '#/join/ABCD'. An admin shares that URL instead
@@ -1320,7 +1404,8 @@ let pendingJoinCode = null;
 let autoJoinTried = false;
 
 const STEPS = ['setup', 'scores'];
-const ALL_SECTIONS = ['home','choose','setup','scores','admin','stats'];
+const ALL_SECTIONS = ['home','choose','setup','scores','admin','stats','player'];
+let playerPageId = null;  // the player whose page is open, when route === 'player'
 
 function showSection(id) {
   for (const s of ALL_SECTIONS) {
@@ -1347,6 +1432,13 @@ function router() {
   }
   else if (h.startsWith('#/admin')) route = 'admin';
   else if (h.startsWith('#/stats')) route = 'stats';
+  else if (h.startsWith('#/player/')) {
+    // A hash that can't name a player is not a player page — fall home rather
+    // than paint a card that will only ever say "not found".
+    const id = Number(h.slice('#/player/'.length).split('?')[0]);
+    if (Number.isInteger(id) && id > 0) { route = 'player'; playerPageId = id; }
+    else route = 'home';
+  }
   else route = 'home';
 
   // '#/round/scores' → step 'scores'. A bare '#/round' means the step we were
@@ -1366,7 +1458,9 @@ function router() {
 
   // Short on purpose: this is a label saying where you are, not a description.
   // The room it leaves on the line is what the live note beside it uses.
-  const subs = { home:'Home', round:roundLabel(), join:'Join a round', admin:'Admin', stats:'Stats' };
+  // 'player' starts generic and is rewritten with the name once it loads —
+  // the id in the hash isn't something to show anyone.
+  const subs = { home:'Home', round:roundLabel(), join:'Join a round', admin:'Admin', stats:'Tag history', player:'Player' };
   document.getElementById('phaseSub').textContent = subs[route];
   applyLiveChrome();  // after the line above: it rewrites the element's content
 
@@ -1379,6 +1473,9 @@ function router() {
   } else if (route === 'stats') {
     showSection('stats');
     loadStatsPage();
+  } else if (route === 'player') {
+    showSection('player');
+    loadPlayerPage(playerPageId);
   } else if (route === 'admin') {
     showSection('admin');
     refreshAdminAuth();
@@ -4033,14 +4130,14 @@ function renderStandings() {
     const mine = standingsRows.find(r => r.playerId === me.id);
     const sinceTxt = mine && mine.since ? ' · since ' + fmtDateShort(String(mine.since).slice(0, 10)) : '';
     html += `
-      <div class="me-banner">
+      <div class="me-banner" onclick="location.hash='#/player/${me.id}'">
         <div class="num${mine ? ringClass(mine.tagNumber) : ''}">${mine ? mine.tagNumber : '—'}</div>
         <div style="flex:1">
           <div class="name">${esc(me.name)}${mine ? medalHtml(mine.tagNumber) : ''} ${standingsDeltaHtml(me.id)}</div>
           <div class="meta">${mine ? 'your tag' + sinceTxt : 'no tag right now'}</div>
         </div>
-        <button class="hist" title="Tag history" onclick="location.hash='#/stats?p=${me.id}'">›</button>
-        <button class="x" title="Unpin" onclick="pinMe(${me.id})">×</button>
+        <button class="hist" title="Player stats" onclick="location.hash='#/player/${me.id}'">›</button>
+        <button class="x" title="Unpin" onclick="event.stopPropagation(); unpinMe()">×</button>
       </div>`;
   }
   const rows = q ? standingsRows.filter(r => r.playerName.toLowerCase().includes(q)) : standingsRows;
@@ -4052,14 +4149,14 @@ function renderStandings() {
     html += '<div class="empty">No players match.</div>';
   } else {
     html += shown.map(r => `
-      <div class="row selectable" onclick="pinMe(${r.playerId})">
+      <div class="row selectable" onclick="location.hash='#/player/${r.playerId}'">
         <div class="num${ringClass(r.tagNumber)}">${r.tagNumber}</div>
         <div class="name">${esc(r.playerName)}${medalHtml(r.tagNumber)}${me && me.id === r.playerId ? ' <span class="meta">pinned</span>' : ''}</div>
         <div class="rmeta">
           ${standingsDeltaHtml(r.playerId)}
           ${r.since ? `<span class="date">${fmtDateShort(String(r.since).slice(0, 10))}</span>` : ''}
         </div>
-        <button class="hist" title="Tag history" onclick="event.stopPropagation(); location.hash='#/stats?p=${r.playerId}'">›</button>
+        <button class="hist" title="Player stats" onclick="event.stopPropagation(); location.hash='#/player/${r.playerId}'">›</button>
       </div>`).join('');
   }
   if (collapsed) {
@@ -4071,14 +4168,18 @@ function renderStandings() {
 }
 
 // Tap a row to pin that player as "me"; tap again (or the banner ×) to unpin.
-function pinMe(playerId) {
-  const me = getMe();
-  if (me && me.id === playerId) {
-    localStorage.removeItem(ME_KEY);
-  } else {
-    const row = standingsRows.find(r => r.playerId === playerId);
-    if (row) localStorage.setItem(ME_KEY, JSON.stringify({ id: row.playerId, name: row.playerName }));
-  }
+function setMe(id, name) {
+  localStorage.setItem(ME_KEY, JSON.stringify({ id, name }));
+}
+function clearMe() {
+  localStorage.removeItem(ME_KEY);
+}
+
+// The banner's x. Only ever an unpin: the banner is only drawn for the player
+// who is already pinned. Pinning itself moved to the player page, where it is a
+// labelled button rather than a tap on a standings row that nothing described.
+function unpinMe() {
+  clearMe();
   renderStandings();
 }
 
@@ -4214,6 +4315,186 @@ function fmtMonth(m) {
   const months = ['January','February','March','April','May','June',
     'July','August','September','October','November','December'];
   return `${months[+mo - 1]} ${y}`;
+}
+
+// ─── Player page: one player's record ─────────────────────
+// The endpoint hands back per-round facts; the tiles below are derived here.
+// That split is deliberate — the server owns the arithmetic that needs the
+// whole field (finish rank, the field average with the player taken out of
+// it) and is unit-tested for it, while min/count/mean over an array the page
+// already holds stays here, where a date filter could later narrow it for free.
+const MIN_SAMPLE = 3;   // below this an average is captioned, not hidden
+let playerData = null;
+
+async function loadPlayerPage(id) {
+  const head = document.getElementById('playerHead');
+  const tiles = document.getElementById('playerTiles');
+  document.getElementById('playerRoundsCard').style.display = 'none';
+  document.getElementById('playerActions').style.display = 'none';
+  head.className = '';
+  head.innerHTML = '<div class="empty">Loading…</div>';
+  tiles.className = '';
+  tiles.innerHTML = '';
+  try {
+    const res = await fetch(API_BASE + '/stats/player/' + id);
+    if (res.status === 404) {
+      head.innerHTML = '<div class="empty">No player with that link.</div>';
+      return;
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    playerData = await res.json();
+  } catch (e) {
+    head.innerHTML = '<div class="empty">Could not load this player (' + esc(e.message) + ').</div>';
+    return;
+  }
+  renderPlayerPage();
+}
+
+function renderPlayerPage() {
+  const d = playerData;
+  const head = document.getElementById('playerHead');
+  const cur = d.current;
+  head.className = 'p-head';
+  head.innerHTML = `
+    <div class="num${cur ? ringClass(cur.tagNumber) : ''}">${cur ? cur.tagNumber : '—'}</div>
+    <div style="flex:1">
+      <h2>${esc(d.player.name)}${cur ? medalHtml(cur.tagNumber) : ''}</h2>
+      <div class="meta">${cur && cur.since
+        ? 'holding since ' + esc(fmtDateShort(String(cur.since).slice(0, 10)))
+        : 'no tag right now'}</div>
+    </div>`;
+  // The header said 'Player' while this was in flight; now it can say who.
+  document.getElementById('phaseSub').textContent = d.player.name;
+  renderPlayerTiles();
+  renderPlayerRounds();
+  renderPlayerPin();
+  // Compare needs a chart to compare on; the pin doesn't, so the actions row
+  // shows either way and only the link inside it comes and goes.
+  document.getElementById('playerActions').style.display = '';
+  document.getElementById('playerCompare').style.display = d.rounds.length ? '' : 'none';
+}
+
+// "This is me" is where the pin became visible. It used to be a bare tap on a
+// standings row, which nothing on Home explained — a first-time visitor had no
+// way to discover it at all.
+function renderPlayerPin() {
+  const me = getMe();
+  const mine = !!me && me.id === playerData.player.id;
+  const btn = document.getElementById('playerPin');
+  btn.classList.toggle('on', mine);
+  btn.textContent = mine ? '✓ This is you' : 'This is me';
+  btn.title = mine ? 'Unpin — stop showing this player at the top of Home' : 'Pin to the top of Home';
+}
+
+function togglePlayerMe() {
+  const me = getMe();
+  const p = playerData.player;
+  if (me && me.id === p.id) clearMe(); else setMe(p.id, p.name);
+  renderPlayerPin();
+}
+
+// "78th". Handles the teens, which don't take st/nd/rd.
+function ord(n) {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+// Sample size, spelled out rather than hidden. Blanking the averages below a
+// threshold would blank a large share of a league this size, which is a worse
+// answer than a soft number with its sample attached.
+function sampleNote(n) {
+  if (n >= MIN_SAMPLE) return 'n=' + n;
+  return 'just ' + n + (n === 1 ? ' round' : ' rounds');
+}
+
+function tileHtml(k, v, n) {
+  return `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`;
+}
+
+function renderPlayerTiles() {
+  const el = document.getElementById('playerTiles');
+  const rs = playerData.rounds;
+  if (!rs.length) {
+    el.className = '';
+    el.innerHTML = '<div class="empty">No finalized rounds yet — this page fills in after their first one.</div>';
+    return;
+  }
+  el.className = 'tiles';
+
+  // Best tag ever: the lowest number they have ever been assigned.
+  const tagged = rs.filter(r => r.assignedTag !== null);
+  const best = tagged.length
+    ? tagged.reduce((a, b) => (b.assignedTag < a.assignedTag ? b : a))
+    : null;
+
+  // Percentile is null in a one-person field, so it gates the finish average
+  // independently of whether a score was posted.
+  const ranked = rs.filter(r => r.percentile !== null);
+  const avgPct = ranked.length
+    ? Math.round(ranked.reduce((a, r) => a + r.percentile, 0) / ranked.length)
+    : null;
+
+  const withDiff = rs.filter(r => r.diff !== null);
+  const avgDiff = withDiff.length
+    ? withDiff.reduce((a, r) => a + r.diff, 0) / withDiff.length
+    : null;
+
+  el.innerHTML =
+    tileHtml('Best tag', best ? '#' + best.assignedTag : '—',
+             best ? esc(fmtDateShort(best.date)) : '') +
+    tileHtml('Rounds', rs.length, 'of ' + playerData.context.roundsAvailable) +
+    tileHtml('Avg finish', avgPct === null ? '—' : ord(avgPct) + ' pct',
+             avgPct === null ? 'no ranked rounds' : sampleNote(ranked.length)) +
+    tileHtml('vs field',
+             avgDiff === null
+               ? '—'
+               : `<span class="delta ${avgDiff < 0 ? 'up' : 'down'}">${fmtDiff(avgDiff)}</span>`,
+             avgDiff === null ? 'no scored rounds' : sampleNote(withDiff.length));
+}
+
+// Signed to one decimal. Negative is good here — under the field average.
+function fmtDiff(n) {
+  return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n).toFixed(1);
+}
+
+function renderPlayerRounds() {
+  const card = document.getElementById('playerRoundsCard');
+  const box = document.getElementById('playerRounds');
+  const rs = playerData.rounds;
+  card.style.display = rs.length ? '' : 'none';
+  if (!rs.length) return;
+
+  const head = '<tr><th>Round</th><th>Course</th><th>Tag</th><th>Score</th>' +
+               '<th>vs field</th><th>Finish</th></tr>';
+  const body = [];
+  rs.forEach((r, i) => {
+    const dnf = r.score === null;
+    body.push(`<tr>
+      <td>${esc(fmtDateShort(r.date))}</td>
+      <td>${esc(r.course || '—')}</td>
+      <td><span class="in">${r.incomingTag}</span> → ${r.assignedTag === null ? '—' : r.assignedTag}</td>
+      <td${dnf ? ' class="dnf"' : ''}>${dnf ? 'DNF' : r.score}</td>
+      <td>${r.diff === null
+        ? '<span class="dnf">—</span>'
+        : `<span class="delta ${r.diff < 0 ? 'up' : 'down'}">${fmtDiff(r.diff)}</span>`}</td>
+      <td>${r.finish === null ? '<span class="dnf">—</span>' : r.finish + ' / ' + r.fieldSize}</td>
+    </tr>`);
+    // Rows run newest first, so the NEXT row is the older round. A tag that
+    // doesn't carry between them means it changed outside a sanctioned round —
+    // an untracked tags match, which is an expected state of a real league and
+    // is annotated here so the column doesn't read as broken.
+    const older = rs[i + 1];
+    if (older && older.assignedTag !== null && older.assignedTag !== r.incomingTag) {
+      body.push('<tr class="gap"><td colspan="6">tag changed between rounds</td></tr>');
+    }
+  });
+  box.innerHTML = `<table class="stats-table">${head}${body.join('')}</table>`;
+}
+
+// Hand off to the comparison chart, which is what the chevron on a standings
+// row used to do on its own.
+function playerCompare() {
+  location.hash = '#/stats?p=' + playerData.player.id;
 }
 
 // ─── Stats: tag-history bump chart ────────────────────────
@@ -4384,8 +4665,9 @@ function renderStatsPicker() {
     const p = pid != null ? byId.get(pid) : null;
     if (!p) return '';
     const c = SERIES_COLORS[slot];
-    return `<button class="chip on" style="border-color:${c}" onclick="toggleStatsPlayer(${p.id})" title="Remove ${esc(p.name)}">
-      <span class="dot" style="background:${c}"></span>${esc(p.name)}<span class="x">×</span></button>`;
+    return `<span class="chip on" style="border-color:${c}">
+      <button class="go" onclick="location.hash='#/player/${p.id}'" title="${esc(p.name)}'s stats"><span class="dot" style="background:${c}"></span>${esc(p.name)}</button>
+      <button class="x" onclick="toggleStatsPlayer(${p.id})" title="Remove ${esc(p.name)} from the chart">×</button></span>`;
   }).join('');
 }
 
