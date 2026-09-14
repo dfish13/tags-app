@@ -239,6 +239,46 @@
   }
   .card-head h2 { margin: 0; }
 
+  /* Admin is a stack of tools used one at a time, so its sections collapse and
+     start closed: the useful default is a short index you can scan in one
+     screen, not six open forms. <details> rather than a JS toggle — it is
+     keyboard accessible, needs no script, and owns its own open state, so a
+     re-render of the contents cannot silently close a section someone opened.
+     Anything you need to see WITHOUT opening a section belongs in the summary:
+     the roster and round counts, and the live pill when a round is running.
+     The marker is a character swap, not a rotation. The live pulse is the only
+     animation in this app and it stays that way. */
+  details.card > summary {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+    font-size: 16px; font-weight: 700;
+    cursor: pointer; list-style: none;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::after {
+    content: '▾'; color: var(--muted); font-size: 13px; flex-shrink: 0;
+  }
+  details.card[open] > summary::after { content: '▴'; }
+  /* Closed, the summary IS the card, so it carries no trailing gap. */
+  details.card[open] > summary { margin-bottom: 10px; }
+
+  /* A disclosure nested INSIDE a section — currently the add-player form in
+     Roster. Deliberately lighter than a card summary: this is an action you
+     take occasionally, sitting above a list you came to read, so it reads as
+     a link rather than as a second heading competing with the real one. */
+  details.sub > summary {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 14px; font-weight: 700; color: var(--primary-ink);
+    cursor: pointer; list-style: none; padding: 10px 0 6px;
+  }
+  details.sub > summary::-webkit-details-marker { display: none; }
+  details.sub > summary::before { content: '+'; font-size: 16px; line-height: 1; }
+  details.sub[open] > summary::before { content: '\2212'; }
+  details.sub[open] {
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 6px; padding-bottom: 10px;
+  }
+
   label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; font-weight: 600; }
   /* Every text-entry type, not just text/number: date and search inputs are
      used too, and anything left out of this list keeps the UA's white fill and
@@ -979,21 +1019,11 @@
       <button class="btn" id="signInBtn" onclick="adminSignIn()">Sign in as admin</button>
     </div>
 
-    <!-- ...and the same card's other face, shown when signed IN. Auth owns one
-         place in both directions: sign-out used to ride in the corner of the
-         add-player form's heading, which made it look like part of that form
-         and put it nowhere near the question it answers. -->
-    <div class="card" id="sessionCard" style="display:none">
-      <h2>Signed in</h2>
-      <p class="hint">Signed in as <span id="adminWho">…</span>.</p>
-      <button class="btn secondary" onclick="adminSignOut()">Sign out</button>
-    </div>
-
     <!-- Live round: open one, share it, run it. Shown when signed IN.
          The form is static markup (not rendered) so a half-typed course name
          survives a re-render; only the panel below is rebuilt. -->
-    <div class="card" id="liveAdminCard" style="display:none">
-      <h2 id="liveAdminTitle">Live round</h2>
+    <details class="card" id="liveAdminCard" style="display:none">
+      <summary><span id="liveAdminTitle">Live round</span></summary>
       <div id="liveOpenForm">
         <p class="hint">Opens a round players join from their own phones, so everyone enters their own scores without an admin.</p>
         <label for="lrDate">Date</label>
@@ -1011,43 +1041,57 @@
       </div>
       <div id="liveOpenRound" style="display:none"></div>
       <div id="lrMsg" class="hint" style="display:none"></div>
-    </div>
+    </details>
 
-    <!-- Add form: shown when signed IN -->
-    <div class="card" id="addCard" style="display:none">
-      <h2>Add player to roster</h2>
-      <p class="hint">Adds a player to the permanent league roster.</p>
-      <label for="aName">Name</label>
-      <input type="text" id="aName" autocomplete="off" placeholder="Player name">
-      <label for="aTag">Tag number (1–300)</label>
-      <input type="number" id="aTag" inputmode="numeric" min="1" max="300" placeholder="e.g. 42">
-      <p class="hint">The player's current tag — their existing one, or a new number being issued.</p>
-      <button class="btn" id="aAddBtn" onclick="adminAddPlayer()">Add player</button>
-      <div id="aMsg" class="hint" style="display:none"></div>
-    </div>
+    <!-- Roster: look someone up, edit them, or add one. Adding used to be its
+         own card, which split "the roster" across two places and put the form
+         above a list of a hundred names you are usually here to read. It is a
+         nested disclosure instead: present whenever you are editing the
+         roster, costing one line when you are not. -->
+    <details class="card" id="rosterCard" style="display:none">
+      <summary><span>Roster (<span id="rosterCount">0</span>)</span></summary>
+      <input type="search" id="rosterSearch" autocomplete="off" placeholder="Search roster…" aria-label="Search roster" oninput="renderRoster(roster)">
+
+      <details class="sub" id="addPlayer">
+        <summary>Add a player</summary>
+        <label for="aName">Name</label>
+        <input type="text" id="aName" autocomplete="off" placeholder="Player name">
+        <label for="aTag">Tag number (1–300)</label>
+        <input type="number" id="aTag" inputmode="numeric" min="1" max="300" placeholder="e.g. 42">
+        <p class="hint">The player's current tag — their existing one, or a new number being issued.</p>
+        <button class="btn" id="aAddBtn" onclick="adminAddPlayer()">Add player</button>
+        <div id="aMsg" class="hint" style="display:none"></div>
+      </details>
+
+      <div id="rosterList"><div class="empty">Loading…</div></div>
+    </details>
+
+    <!-- Rounds: fix a date or course, reopen check-in that closed too early,
+         or delete a round. Shown when signed IN. -->
+    <details class="card" id="roundsCard" style="display:none">
+      <summary><span>Rounds (<span id="roundsCount">0</span>)</span></summary>
+      <p class="hint">Correct a date or course, reopen check-in on a round that
+        closed too early, or delete one.</p>
+      <div id="adminRoundsList"><div class="empty">Loading…</div></div>
+    </details>
 
     <!-- Import a round exported by a non-admin, for review + finalizing -->
-    <div class="card" id="importCard" style="display:none">
-      <h2>Import a round for approval</h2>
+    <details class="card" id="importCard" style="display:none">
+      <summary><span>Import a round for approval</span></summary>
       <p class="hint">Paste an exported round below. It loads into the round view where you can review, edit, and finalize it.</p>
       <textarea id="importIn" placeholder="Paste exported round text here…"></textarea>
       <button class="btn" id="importBtn" onclick="importRound()">Load round for review</button>
       <div id="importMsg" class="hint" style="display:none"></div>
-    </div>
+    </details>
 
-    <!-- Rounds: fix a date or course, reopen check-in that closed too early,
-         or delete a round. Shown when signed IN. -->
-    <div class="card" id="roundsCard" style="display:none">
-      <h2>Rounds (<span id="roundsCount">0</span>)</h2>
-      <p class="hint">Correct a date or course, reopen check-in on a round that
-        closed too early, or delete one.</p>
-      <div id="adminRoundsList"><div class="empty">Loading…</div></div>
-    </div>
-
-    <div class="card" id="rosterCard" style="display:none">
-      <h2>Roster (<span id="rosterCount">0</span>)</h2>
-      <input type="search" id="rosterSearch" autocomplete="off" placeholder="Search roster…" aria-label="Search roster" oninput="renderRoster(roster)">
-      <div id="rosterList"><div class="empty">Loading…</div></div>
+    <!-- Sign-out, last on the page. It is the one control here you reach for
+         when you are FINISHED, so it sits after the work rather than above it,
+         and it stays an open card while everything above collapses — putting
+         the way out behind a disclosure triangle is not a saving. -->
+    <div class="card" id="sessionCard" style="display:none">
+      <h2>Signed in</h2>
+      <p class="hint">Signed in as <span id="adminWho">…</span>.</p>
+      <button class="btn secondary" onclick="adminSignOut()">Sign out</button>
     </div>
   </section>
 
@@ -2395,7 +2439,7 @@ async function refreshAdminAuth() {
   // Everything on this page except the sign-in card is admin-only, so they all
   // move together. Listed rather than folded into one container because their
   // order on the page is deliberate and a wrapper would fight the card spacing.
-  const signedIn = ['sessionCard', 'liveAdminCard', 'addCard', 'importCard', 'roundsCard', 'rosterCard'];
+  const signedIn = ['liveAdminCard', 'rosterCard', 'roundsCard', 'importCard', 'sessionCard'];
   document.getElementById('authCard').style.display = adminEmail ? 'none' : '';
   for (const id of signedIn) {
     document.getElementById(id).style.display = adminEmail ? '' : 'none';
