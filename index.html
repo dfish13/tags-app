@@ -91,7 +91,10 @@
     color: var(--text);
     font-size: 17px;
     line-height: 1.4;
-    padding-bottom: 90px;
+    /* Room to scroll the last card clear of the browser's bottom chrome.
+       Nothing is fixed to the bottom of the viewport — this is breathing
+       room, and 90px was a third of a phone screen of it. */
+    padding-bottom: 28px;
   }
   header {
     background: var(--green);
@@ -228,6 +231,13 @@
     margin-bottom: 14px;
   }
   .card h2 { margin: 0 0 10px; font-size: 16px; }
+  /* A card heading with a control beside it, rather than stacked above it —
+     a two-word title leaves most of that line empty anyway. */
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 10px;
+  }
+  .card-head h2 { margin: 0; }
 
   label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; font-weight: 600; }
   /* Every text-entry type, not just text/number: date and search inputs are
@@ -380,15 +390,18 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 11px 4px;
+    /* 7px around a 32px bubble puts the row at 46px — still over the 44px
+       tap target, which matters: these rows get tapped outdoors, one-handed,
+       during a round. */
+    padding: 7px 4px;
     border-bottom: 1px solid var(--line);
   }
   .row:last-child { border-bottom: none; }
   .row .num {
-    min-width: 42px; height: 42px;
+    min-width: 32px; height: 32px;
     display: flex; align-items: center; justify-content: center;
     background: var(--green); color: var(--on-primary);
-    border-radius: 9px; font-weight: 700; font-size: 16px;
+    border-radius: 7px; font-weight: 700; font-size: 14px;
     flex-shrink: 0;
     --bubble-fill: var(--green);
   }
@@ -517,10 +530,10 @@
     border: 1.5px solid var(--accent); border-radius: 10px;
   }
   .me-banner .num {
-    min-width: 42px; height: 42px; flex-shrink: 0;
+    min-width: 32px; height: 32px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     background: var(--accent); color: var(--accent-text);
-    border-radius: 9px; font-weight: 800; font-size: 16px;
+    border-radius: 7px; font-weight: 800; font-size: 14px;
     --bubble-fill: var(--accent);
   }
   /* The rainbow band: tags 1-25, wherever a tag bubble is drawn.
@@ -533,7 +546,7 @@
      `.row .num` and `.me-banner .num` — both of which set `background` — and a
      tie is broken by source order, which is far too easy to undo later. */
   .row .num.rainbow, .me-banner .num.rainbow {
-    border: 2.5px solid transparent;
+    border: 2px solid transparent;
     background:
       linear-gradient(var(--bubble-fill), var(--bubble-fill)) padding-box,
       var(--rainbow) border-box;
@@ -785,15 +798,15 @@
 
     <div class="card">
       <h2>Current tag standings</h2>
-      <p class="hint">Who holds each tag right now, worked out from every finalized round in date order. Tap your name to pin your tag to the top.</p>
       <input type="search" id="standingsSearch" autocomplete="off" placeholder="Search players…" aria-label="Search players" oninput="renderStandings()">
       <div id="standingsList"><div class="empty">Loading…</div></div>
     </div>
 
     <div class="card">
-      <h2 id="historyTitle">Round history</h2>
-      <p class="hint" id="historyHint">Past finalized rounds. Tap one to see its tag assignments.</p>
-      <select id="historyMonthSel" aria-label="Show rounds from" onchange="setHistoryMonth(this.value)" style="display:none;margin-bottom:10px"></select>
+      <div class="card-head">
+        <h2 id="historyTitle">Round history</h2>
+        <select id="historyMonthSel" aria-label="Show rounds from" onchange="setHistoryMonth(this.value)" style="display:none"></select>
+      </div>
       <div id="historyList"><div class="empty">Loading…</div></div>
     </div>
   </section>
@@ -3931,7 +3944,11 @@ async function loadMovement() {
   } catch (e) { /* no deltas — rows simply omit them */ }
 }
 
-let standingsExpanded = false; // top-10 collapse state (search always shows all matches)
+// How many players the board shows before the "Show all" button. Searching is
+// exempt — a search always shows every match, however many there are.
+const STANDINGS_TOP = 5;
+
+let standingsExpanded = false; // collapse state (search always shows all matches)
 
 // Gold, silver and bronze for tags 1, 2 and 3 — a property of the tag number
 // itself, not of a player's position, since standings are ordered by tag. Only
@@ -3983,10 +4000,10 @@ function renderStandings() {
       </div>`;
   }
   const rows = q ? standingsRows.filter(r => r.playerName.toLowerCase().includes(q)) : standingsRows;
-  // Collapse to the top 10 unless searching or expanded — keeps the Round
+  // Collapse to STANDINGS_TOP unless searching or expanded — keeps the Round
   // history card reachable instead of buried under 200 rows.
-  const collapsed = !q && !standingsExpanded && rows.length > 10;
-  const shown = collapsed ? rows.slice(0, 10) : rows;
+  const collapsed = !q && !standingsExpanded && rows.length > STANDINGS_TOP;
+  const shown = collapsed ? rows.slice(0, STANDINGS_TOP) : rows;
   if (rows.length === 0) {
     html += '<div class="empty">No players match.</div>';
   } else {
@@ -4003,8 +4020,8 @@ function renderStandings() {
   }
   if (collapsed) {
     html += `<button class="linkbtn showall" onclick="standingsExpanded = true; renderStandings()">Show all ${rows.length} players ▾</button>`;
-  } else if (!q && standingsExpanded && rows.length > 10) {
-    html += `<button class="linkbtn showall" onclick="standingsExpanded = false; renderStandings()">Show top 10 ▴</button>`;
+  } else if (!q && standingsExpanded && rows.length > STANDINGS_TOP) {
+    html += `<button class="linkbtn showall" onclick="standingsExpanded = false; renderStandings()">Show top ${STANDINGS_TOP} ▴</button>`;
   }
   el.innerHTML = html;
 }
