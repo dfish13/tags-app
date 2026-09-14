@@ -447,9 +447,19 @@ That's it — same code, your config, your data, your host.
 
 The reference instance runs on a Raspberry Pi behind a Cloudflare Tunnel:
 
-- `tags.duncanfish.co/api/*` → the API container (localhost:3001)
-- `tags.duncanfish.co/*` → the static `index.html`
+- `boulderdg.com/api/*` → the API container (localhost:3001)
+- `boulderdg.com/*` → the static `index.html`
 - Cloudflare Access protects `/api/admin/*` with an email allowlist.
+
+**Every hostname that routes to the tunnel needs its own Access application.**
+`requireAdmin` trusts the `Cf-Access-Authenticated-User-Email` header and does
+not verify the Access JWT, which is safe *only* while Access sits in front of
+`/api/admin/*` and overwrites that header. On a hostname with no Access
+application, the header is whatever the client sends — so adding a second
+hostname (a new domain, or `www`) without an application for it hands out admin
+writes to anyone. Prefer a redirect rule over a second tunnel hostname when you
+only want an alias. Verify with `curl -o /dev/null -w '%{http_code}'` against
+`/api/admin/players`: anything but a `302` means Access is not in front.
 
 **The Access policy must stay scoped to `/api/admin/*`.** The rest of
 `/api/rounds/*` is reachable without an Access identity *on purpose* — that is
