@@ -1,8 +1,9 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { createApp } from "../app.js";
 import { db, closeDb } from "../db/client.js";
+import { replayTagHolders } from "../lib/tagHolders.js";
 import {
   admins,
   players,
@@ -224,6 +225,41 @@ function isoDate(daysAgo: number): string {
   return d.toLocaleDateString("en-CA");
 }
 
+// One untracked tags match, the thing the round log cannot explain. Two players
+// swap tags between Ironwood Park and Quarry Bend, recorded as a pair of dated
+// tag_adjustments rather than a round — which is exactly how a real one enters
+// the app, when it enters at all.
+//
+// It is in the fixture for two reasons. It is the only thing here that
+// exercises tag_adjustments and the replay that folds them in with rounds, and
+// it is what puts a visible break in a player's tag chain: the player page
+// annotates a tag that didn't carry between rounds, and on a fixture whose
+// chain is perfect that annotation can never be seen. Roster indices 0 and 3
+// both play on either side of the date, so both pages show the break.
+const UNTRACKED_SWAP = { afterDaysAgo: 14, onDaysAgo: 10, a: 0, b: 3 };
+
+async function applyUntrackedSwap(playerIds: number[]) {
+  const held = await currentTags();
+  const a = playerIds[UNTRACKED_SWAP.a];
+  const b = playerIds[UNTRACKED_SWAP.b];
+  const aTag = held.get(a)!;
+  const bTag = held.get(b)!;
+  const rows = await db
+    .select({ id: tags.id, number: tags.number })
+    .from(tags)
+    .where(inArray(tags.number, [aTag, bTag]));
+  const idOf = new Map(rows.map((t) => [t.number, t.id]));
+  const effectiveDate = isoDate(UNTRACKED_SWAP.onDaysAgo);
+  const note = "untracked tags match";
+  await db.insert(tagAdjustments).values([
+    { playerId: a, tagId: idOf.get(bTag)!, effectiveDate, note },
+    { playerId: b, tagId: idOf.get(aTag)!, effectiveDate, note },
+  ]);
+  // tag_holders is derived, so the swap only becomes real once the log is
+  // replayed — and it has to be real before the next round reads incoming tags.
+  await replayTagHolders(db);
+}
+
 // Who holds which tag right now, straight from the app. Each round's incoming
 // tags are whatever the previous round left people holding, so this is read
 // fresh before every round rather than tracked in here.
@@ -277,6 +313,9 @@ async function main() {
         })),
       },
     });
+    if (round.daysAgo === UNTRACKED_SWAP.afterDaysAgo) {
+      await applyUntrackedSwap(playerIds);
+    }
   }
 
   // The live round: open for check-in, dated today.
