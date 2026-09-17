@@ -29,6 +29,13 @@
       "when": 1786204089585,
       "tag": "0003_early_james_howlett",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789668907038,
+      "tag": "0004_short_loki",
+      "breakpoints": true
     }
   ]
 }

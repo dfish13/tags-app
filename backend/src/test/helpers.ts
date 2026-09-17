@@ -113,6 +113,52 @@ export async function addPlayer(name: string, tagNumber: number) {
   return res.body as { id: number; name: string; tagNumber: number };
 }
 
+// Sign a player up for a live round — the player-side half of the two-step
+// check-in. They hold a place and claim their tag number, but they are not in
+// the field until checkIn() runs.
+export async function signUp(
+  roundId: number,
+  code: string | undefined,
+  body: Record<string, unknown>,
+  ip?: string
+) {
+  const res = await api("POST", `/api/rounds/${roundId}/signup`, {
+    code,
+    body,
+    ip,
+  });
+  if (res.status !== 201) {
+    throw new Error(`signUp failed: ${JSON.stringify(res.body)}`);
+  }
+  return res.body as { id: number; playerName: string; checkedIn: boolean };
+}
+
+// The admin half: the person collecting tags and pool money confirming these
+// entries are really here. Only after this are they in the round.
+export async function checkIn(roundId: number, entryIds: number[]) {
+  const res = await api("POST", `/api/admin/rounds/${roundId}/checkin`, {
+    admin: true,
+    body: { entryIds },
+  });
+  if (res.status !== 200) {
+    throw new Error(`checkIn failed: ${JSON.stringify(res.body)}`);
+  }
+  return res.body as { entries: any[] };
+}
+
+// Both halves at once — what most tests want, because they are about something
+// other than the check-in split and just need players in the round.
+export async function enterRound(
+  roundId: number,
+  code: string | undefined,
+  body: Record<string, unknown>,
+  ip?: string
+) {
+  const entry = await signUp(roundId, code, body, ip);
+  const { entries } = await checkIn(roundId, [entry.id]);
+  return entries[0];
+}
+
 export async function openRound(
   body: Record<string, unknown> = { date: "2026-07-28", course: "Maple Hill" }
 ) {

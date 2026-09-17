@@ -172,11 +172,15 @@ const HISTORY = [
   },
 ];
 
-// The live round: who is checked in, and which of them already have a score.
-// A deliberate mix — the score-entry tab styles scored and unscored fields
-// differently, and that only shows up with both on screen at once.
+// The live round: who has signed up, which of them the tag table has actually
+// checked in, and which of those already have a score. A deliberate mix at
+// both steps — the check-in list paints the field and the waiting queue
+// differently, and the score tab styles scored and unscored fields
+// differently, and neither shows up without both states on screen at once.
 const LIVE_COURSE = "Fox Ridge";
-const LIVE_CHECKED_IN = [0, 5, 3, 13, 8, 2, 10];
+const LIVE_SIGNED_UP = [0, 5, 3, 13, 8, 2, 10];
+// The last two of those are still waiting on the person with the cash box.
+const LIVE_CHECKED_IN = [0, 5, 3, 13, 8];
 const LIVE_SCORES: Record<number, number> = { 0: 52, 5: 54, 3: 57 };
 
 let baseUrl = "";
@@ -333,8 +337,11 @@ async function main() {
     .where(eq(rounds.id, live.id));
 
   const held = await currentTags();
-  for (const idx of LIVE_CHECKED_IN) {
-    const entry = await api("POST", `/api/rounds/${live.id}/checkin`, {
+  const entryOf = new Map<number, number>();
+  for (const idx of LIVE_SIGNED_UP) {
+    // The player-side half: anyone at the course can do this, and it only
+    // holds a place. Scores are refused until the entry is checked in below.
+    const entry = await api("POST", `/api/rounds/${live.id}/signup`, {
       code: DEV_JOIN_CODE,
       body: {
         playerId: playerIds[idx],
@@ -342,18 +349,27 @@ async function main() {
         acePool: idx % 2 === 0,
       },
     });
-    if (LIVE_SCORES[idx] !== undefined) {
-      await api("PATCH", `/api/rounds/${live.id}/entries/${entry.id}`, {
-        code: DEV_JOIN_CODE,
-        body: { score: LIVE_SCORES[idx] },
-      });
-    }
+    entryOf.set(idx, entry.id);
   }
 
+  // The admin half, in one request — the same thing the check-in list's
+  // "Check in all" button sends.
+  await api("POST", `/api/admin/rounds/${live.id}/checkin`, {
+    body: { entryIds: LIVE_CHECKED_IN.map((idx) => entryOf.get(idx)) },
+  });
+
+  for (const [idx, score] of Object.entries(LIVE_SCORES)) {
+    await api("PATCH", `/api/rounds/${live.id}/entries/${entryOf.get(Number(idx))}`, {
+      code: DEV_JOIN_CODE,
+      body: { score },
+    });
+  }
+
+  const waiting = LIVE_SIGNED_UP.length - LIVE_CHECKED_IN.length;
   console.log(
     `fixture loaded: ${ROSTER.length} players, ${HISTORY.length} finalized rounds, ` +
       `1 live round (#${live.id}, ${LIVE_COURSE}) with ${LIVE_CHECKED_IN.length} ` +
-      `checked in and ${Object.keys(LIVE_SCORES).length} scored`
+      `checked in, ${waiting} waiting, and ${Object.keys(LIVE_SCORES).length} scored`
   );
 }
 
