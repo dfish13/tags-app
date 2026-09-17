@@ -5,6 +5,11 @@
 #
 #   scripts/dev.sh up        # start everything and serve on :8123 (Ctrl-C to stop)
 #   scripts/dev.sh up --keep # same, but don't reload the fixture
+#   scripts/dev.sh up --lan  # also listen on this machine's LAN address, so a
+#                            # phone on the same wifi can open it. The server
+#                            # forges an admin identity for every request, so
+#                            # everyone who can reach the port is the admin —
+#                            # which is why it is opt-in and not the default.
 #   scripts/dev.sh reseed    # reset the data to the fixture, server keeps running
 #   scripts/dev.sh status    # what's running
 #   scripts/dev.sh down      # stop the server and destroy the database
@@ -94,11 +99,22 @@ seed() {
 
 case "${1:-}" in
   up)
+    keep=""
+    shift
+    for arg in "$@"; do
+      case "$arg" in
+        --keep) keep=1 ;;
+        # Bind every interface rather than loopback. src/dev/server.ts prints
+        # the address to type into the phone and says what it's opening up.
+        --lan)  export DEV_HOST=0.0.0.0 ;;
+        *) echo "unknown option for up: $arg" >&2; exit 1 ;;
+      esac
+    done
     ensure_node
     npm_deps
     db_up
     migrate
-    if [ "${2:-}" = "--keep" ]; then
+    if [ -n "$keep" ]; then
       echo "keeping existing data (--keep)"
     else
       seed

@@ -457,7 +457,21 @@
   }
   .badge-ace { background: var(--accent); color: var(--accent-text); }
   .badge-ctp { background: var(--blue); color: var(--secondary-text); }
-  .row .score-in { width: 80px; }
+  /* The box is only half the target. A thumb aiming at an 80px box in a 46px
+     row misses into the row above about as often as it lands, so a label
+     reaches out to the LEFT of the field and makes that dead space part of
+     the same tap.
+     It stops well short of the name on purpose. This list is DRAGGED far more
+     often than it is typed into, and the left of every row has to stay inert
+     for that — a touch that lands on a label is a touch that opens a keyboard
+     nobody asked for. Browsers only fire the label's click when the finger
+     didn't travel, so a real drag anywhere is still a drag; this just keeps
+     the sloppy-tap zone away from where the dragging happens. */
+  .row .score-hit {
+    display: flex; align-items: center; flex-shrink: 0;
+    padding-left: 18px; cursor: pointer;
+  }
+  .row .score-in { width: 96px; min-height: 48px; }
   /* No spinners. They eat a third of a field this narrow and nobody nudges a
      score one stroke at a time on a phone — the numeric keypad is the input.
      type=number stays, for the keypad and the parsing. */
@@ -2240,6 +2254,10 @@ function paintScoreField(p) {
 // not a local.
 let scoreOrder = 'name';
 
+// Set when a poll wanted to rebuild the score list but somebody was typing in
+// it. onScoreBlur() lands the skipped render once the thumb is off.
+let scoreRenderDeferred = false;
+
 function setScoreOrder(o) {
   scoreOrder = o;
   renderScoreList();
@@ -2256,11 +2274,27 @@ function scoreEntryOrder() {
     .sort((a, b) => a.name.localeCompare(b.name) || a.tag - b.tag);
 }
 
+// Called from BOTH `change` and `blur`, and it has to be, because `change`
+// alone silently loses scores.
+//
+// A poll landing mid-typing rebuilds this list, so restoreScoreFocus() puts
+// the half-typed text back into the fresh input by assigning `.value`. That
+// assignment resets the browser's baseline for deciding whether the user
+// edited the field, so the eventual blur fires NO `change` — the number sits
+// there looking entered, never reaches state, gets no outgoing tag, and is
+// wiped by the next re-render that finds the row unfocused. `blur` fires
+// whatever the browser thinks about the baseline, which is why it's here.
+//
+// That makes double-calls the normal case (change, then blur), hence the
+// no-op guard: committing the same number twice would queue a second
+// identical PATCH for nothing.
 function setScore(id, val) {
   const p = state.players.find(p => p.id === id);
   if (!p) return;
   const n = val.trim() === '' ? null : parseInt(val, 10);
-  p.score = (n !== null && !isNaN(n)) ? n : null;
+  const score = (n !== null && !isNaN(n)) ? n : null;
+  if (score === p.score) return;
+  p.score = score;
   paintScoreField(p);
   save();
   if (isLive()) queueScoreWrite(id, p.score);
@@ -2269,6 +2303,48 @@ function setScore(id, val) {
   // the numbers move — and the row being typed into must not be rebuilt.
   if (effectiveScoreOrder() === 'tag') renderScoreList();
   else paintOutgoingTags();
+}
+
+// The keyboard's Next key commits this score and moves to the next player who
+// still needs one, so a phone gets tapped at a field once and then not again.
+// Nothing wraps past the end: sending the thumb back to the top of the list
+// unannounced is the sort of jump this whole change is about, so the last
+// empty field just closes the keyboard.
+function onScoreKey(e, id) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  setScore(id, e.target.value);
+  const next = nextUnscoredField(e.target);
+  if (!next) { e.target.blur(); return; }
+  // preventScroll first: focus() would scroll the field to wherever it likes,
+  // usually hard against the top of the keyboard. Centring it is steadier and
+  // leaves the next few names readable.
+  next.focus({ preventScroll: true });
+  next.scrollIntoView({ block: 'center' });
+}
+
+// The next empty field after this one, then round to the top — while scoring,
+// the list is in name order, which is the order the card is being read in.
+function nextUnscoredField(from) {
+  const fields = Array.from(document.querySelectorAll('#scoreList .score-in'));
+  const i = fields.indexOf(from);
+  if (i < 0) return null;
+  const empty = el => el.value.trim() === '';
+  return fields.slice(i + 1).find(empty) || fields.slice(0, i).find(empty) || null;
+}
+
+// Blur commits (see setScore) and is also where a render deferred by
+// renderScoreList()'s focus guard finally lands.
+//
+// The timeout is load-bearing. Tapping straight from one score box to the next
+// fires this blur BEFORE the new field takes focus, so checking immediately
+// would see an empty focus and rebuild the list out from under a tap already
+// on its way. A turn later, the new field owns the focus and we defer again.
+function onScoreBlur(id, val) {
+  setScore(id, val);
+  setTimeout(() => {
+    if (scoreRenderDeferred && focusedEntryId() === null) renderScoreList();
+  }, 0);
 }
 
 function resetRound() {
@@ -2509,11 +2585,31 @@ function renderScoreList() {
   }
 
   finalizeBtn.style.display = canFinalize() ? '' : 'none';
-  // A live round re-renders this on every poll, so anything the user is
-  // part-way through typing is captured and put back afterwards.
+
+  // Never rebuild this list while a score field has focus. The rebuild throws
+  // away the input under the thumb, and putting focus back on its replacement
+  // scrolls the page to it — on a phone that is the screen jumping every 15
+  // seconds, mid-entry, for a poll that usually changed nothing. It is also
+  // what moves a row out from under you in tag order, since a score landing
+  // re-sorts the list.
+  //
+  // So repaint only what can change without disturbing anyone — the outgoing
+  // tags, the tie flags, the save indicators, the hint line — and leave the
+  // structure alone. onScoreBlur() lands the real render once they look up.
+  if (focusedEntryId() !== null) {
+    scoreRenderDeferred = true;
+    paintOutgoingTags();          // also rewrites dnfHint
+    if (isLive()) renderSaveStates();
+    return;
+  }
+  scoreRenderDeferred = false;
+
+  // Belt and braces behind the guard above, which should mean there is never
+  // a part-typed value to carry across a rebuild.
   const scoreFocus = captureScoreFocus();
   const { ordered, dnfCount } = scoreRows();
-  sl.innerHTML = ordered.map(r => scoreRowHtml({
+  sl.innerHTML = ordered.map((r, i) => scoreRowHtml({
+    last: i === ordered.length - 1,
     id: r.player.id,
     // No score, no tag yet: a confident number beside an empty field would be
     // an answer to a question nobody has asked. The hint below the list says
@@ -2539,11 +2635,16 @@ function renderScoreList() {
 function scoreRowHtml(r) {
   // A finalized row has no id: nothing on it is editable or repaintable.
   const field = r.id === null ? '' : `
-      <input class="score-in" type="number" inputmode="numeric" placeholder="score"
-        id="score-${r.id}"
-        value="${r.score === null || r.score === undefined ? '' : r.score}"
-        aria-label="Score for ${esc(r.name)}"
-        onchange="setScore(${r.id}, this.value)">`;
+      <label class="score-hit">
+        <input class="score-in" type="number" inputmode="numeric" placeholder="score"
+          id="score-${r.id}"
+          value="${r.score === null || r.score === undefined ? '' : r.score}"
+          aria-label="Score for ${esc(r.name)}"
+          enterkeyhint="${r.last ? 'done' : 'next'}"
+          onkeydown="onScoreKey(event, ${r.id})"
+          onchange="setScore(${r.id}, this.value)"
+          onblur="onScoreBlur(${r.id}, this.value)">
+      </label>`;
   const key = r.id === null ? '' : ` data-for="${r.id}"`;
   return `
     <div class="row">
@@ -4116,7 +4217,9 @@ function restoreScoreFocus(f) {
   const el = document.getElementById(f.id);
   if (!el) return;
   el.value = f.value; // a background poll must never retype someone's field
-  el.focus();
+  // preventScroll: this runs from a repaint nobody asked for, and a phone
+  // scrolling the field into view is exactly the jump being designed out.
+  el.focus({ preventScroll: true });
   try { el.setSelectionRange(f.start, f.end); } catch (e) { /* number inputs */ }
 }
 
