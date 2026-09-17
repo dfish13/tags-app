@@ -14,6 +14,12 @@ export const DEV_JOIN_CODE = "TAGS";
 
 export const DEV_PORT = Number(process.env.PORT) || 8123;
 
+// Loopback unless you say otherwise. This server forges an admin identity for
+// every request, so opening it to the network makes anyone who can reach the
+// port an admin on the dev database — fine for testing on your own phone,
+// never a default. scripts/dev.sh up --lan is the way in.
+export const DEV_HOST = process.env.DEV_HOST || "127.0.0.1";
+
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 // The one thing standing between a mistyped DATABASE_URL and the league's real

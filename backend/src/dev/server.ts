@@ -2,7 +2,8 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApp } from "../app.js";
-import { DEV_ADMIN_EMAIL, DEV_JOIN_CODE, DEV_PORT, assertLocalDatabase } from "./config.js";
+import { networkInterfaces } from "node:os";
+import { DEV_ADMIN_EMAIL, DEV_HOST, DEV_JOIN_CODE, DEV_PORT, assertLocalDatabase } from "./config.js";
 
 // The local stand-in for production's edge. In production, cloudflared
 // path-routes ONE hostname to two services — /api/* to this API, /* to a static
@@ -82,16 +83,34 @@ outer.use(
   })
 );
 
-// Loopback only. This server hands out an admin identity to anyone who asks.
-outer.listen(DEV_PORT, "127.0.0.1", () => {
+// This machine's LAN address, for the phone that is going to open this. First
+// non-internal IPv4 wins; a machine with several is unusual enough that
+// printing one and being wrong is better than printing a list.
+function lanAddress(): string | null {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === "IPv4" && !a.internal) return a.address;
+    }
+  }
+  return null;
+}
+
+// Loopback unless DEV_HOST says otherwise — this server hands out an admin
+// identity to anyone who asks, so reaching it is reaching the Admin tab.
+outer.listen(DEV_PORT, DEV_HOST, () => {
   const url = `http://127.0.0.1:${DEV_PORT}`;
+  const lan = DEV_HOST === "127.0.0.1" ? null : lanAddress();
   console.log(`
   tags-app dev stack
     app        ${url}
-    api        ${url}/api/health
+    api        ${url}/api/health${lan ? `
+    on phone   http://${lan}:${DEV_PORT}   ← same wifi` : ""}
     admin      signed in as ${DEV_ADMIN_EMAIL}${signedIn ? "" : " (currently signed out)"}
     join code  ${DEV_JOIN_CODE}
-
+${lan ? `
+    Open to the network: every device that can reach this port is signed in
+    as the dev admin. Ctrl-C when you're done testing.
+` : ""}
     reseed:    scripts/dev.sh reseed
     shut down: scripts/dev.sh down
 `);
