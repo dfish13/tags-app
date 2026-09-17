@@ -2,13 +2,17 @@ import { test, before, after, beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
 import { eq } from "drizzle-orm";
 import { closeDb, db } from "../db/client.js";
-import { rounds } from "../db/schema.js";
+import { rounds, tags } from "../db/schema.js";
 import { codeFailureLimiter } from "../middleware/requireRoundCode.js";
 import {
+  ADMIN_EMAIL,
   api,
   addPlayer,
+  checkIn,
+  enterRound,
   openRound,
   resetDb,
+  signUp,
   startTestServer,
   stopTestServer,
 } from "../test/helpers.js";
@@ -248,12 +252,12 @@ describe("the code gate", () => {
   });
 });
 
-describe("check-in", () => {
-  test("checks a player in and shows them in the public round", async () => {
+describe("signing up", () => {
+  test("signs a player up and shows them in the public round", async () => {
     const round = await openRound();
     const rey = await addPlayer("Rey", 12);
 
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: rey.id, tagNumber: 12, acePool: true, ctp: false },
       ip: freshIp(),
@@ -262,6 +266,7 @@ describe("check-in", () => {
     assert.equal(res.body.playerName, "Rey");
     assert.equal(res.body.incomingNumber, 12);
     assert.equal(res.body.acePool, true);
+    assert.equal(res.body.checkedIn, false, "signing up is not being in the round");
 
     const round_ = await api("GET", `/api/rounds/${round.id}`);
     assert.equal(round_.body.entries.length, 1);
@@ -269,7 +274,7 @@ describe("check-in", () => {
 
   test("rejects a player not on the roster", async () => {
     const round = await openRound();
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: 9999, tagNumber: 12 },
       ip: freshIp(),
@@ -282,7 +287,7 @@ describe("check-in", () => {
     const round = await openRound();
     const rey = await addPlayer("Rey", 12);
     for (const tagNumber of [0, 301, 1.5, "abc"]) {
-      const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+      const res = await api("POST", `/api/rounds/${round.id}/signup`, {
         code: round.joinCode!,
         body: { playerId: rey.id, tagNumber },
         ip: freshIp(),
@@ -294,20 +299,20 @@ describe("check-in", () => {
   test("rejects the same player twice", async () => {
     const round = await openRound();
     const rey = await addPlayer("Rey", 12);
-    const first = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const first = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: rey.id, tagNumber: 12 },
       ip: freshIp(),
     });
     assert.equal(first.status, 201);
 
-    const second = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const second = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: rey.id, tagNumber: 40 },
       ip: freshIp(),
     });
     assert.equal(second.status, 409);
-    assert.match(second.body.error, /already checked in/i);
+    assert.match(second.body.error, /already signed up/i);
   });
 
   test("rejects two players bringing the same tag", async () => {
@@ -315,21 +320,21 @@ describe("check-in", () => {
     const rey = await addPlayer("Rey", 12);
     const sam = await addPlayer("Sam", 40);
 
-    await api("POST", `/api/rounds/${round.id}/checkin`, {
+    await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: rey.id, tagNumber: 12 },
       ip: freshIp(),
     });
-    const clash = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const clash = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: sam.id, tagNumber: 12 },
       ip: freshIp(),
     });
     assert.equal(clash.status, 409);
-    assert.match(clash.body.error, /already checked in/i);
+    assert.match(clash.body.error, /already spoken for/i);
   });
 
-  test("concurrent check-ins on one tag: exactly one wins", async () => {
+  test("concurrent signups on one tag: exactly one wins", async () => {
     // The real hazard of a live round. Both requests pass the application-level
     // checks before either inserts, so only the database constraint can decide
     // this — a duplicated incoming tag would corrupt the redistribution, since
@@ -344,7 +349,7 @@ describe("check-in", () => {
 
     const results = await Promise.all(
       contenders.map((p) =>
-        api("POST", `/api/rounds/${round.id}/checkin`, {
+        api("POST", `/api/rounds/${round.id}/signup`, {
           code: round.joinCode!,
           body: { playerId: p.id, tagNumber: 55 },
           ip: freshIp(),
@@ -354,7 +359,7 @@ describe("check-in", () => {
 
     const created = results.filter((r) => r.status === 201);
     const rejected = results.filter((r) => r.status === 409);
-    assert.equal(created.length, 1, "exactly one check-in may claim tag #55");
+    assert.equal(created.length, 1, "exactly one signup may claim tag #55");
     assert.equal(rejected.length, 3);
 
     const detail = await api("GET", `/api/rounds/${round.id}`);
@@ -363,6 +368,8 @@ describe("check-in", () => {
 });
 
 describe("score editing", () => {
+  // Checked in, not merely signed up: a score is only accepted from a player
+  // the tag table has confirmed.
   async function roundWithPlayers() {
     const round = await openRound();
     const rey = await addPlayer("Rey", 12);
@@ -372,12 +379,14 @@ describe("score editing", () => {
       [rey, 12],
       [sam, 40],
     ] as const) {
-      const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
-        code: round.joinCode!,
-        body: { playerId: p.id, tagNumber: tag },
-        ip: freshIp(),
-      });
-      entries.push(res.body);
+      entries.push(
+        await enterRound(
+          round.id,
+          round.joinCode!,
+          { playerId: p.id, tagNumber: tag },
+          freshIp()
+        )
+      );
     }
     return { round, entries };
   }
@@ -447,7 +456,15 @@ describe("score editing", () => {
   });
 
   test("correcting an incoming tag respects the no-duplicates rule", async () => {
-    const { round, entries } = await roundWithPlayers();
+    // Signups, not check-ins: fixing a mistyped tag is what the window before
+    // the tag table confirms you is for. Afterwards the number is locked.
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+    const sam = await addPlayer("Sam", 40);
+    const entries = [
+      await signUp(round.id, round.joinCode!, { playerId: rey.id, tagNumber: 12 }, freshIp()),
+      await signUp(round.id, round.joinCode!, { playerId: sam.id, tagNumber: 40 }, freshIp()),
+    ];
     const clash = await api(
       "PATCH",
       `/api/rounds/${round.id}/entries/${entries[0].id}`,
@@ -474,7 +491,7 @@ describe("score editing", () => {
     assert.equal(del.status, 204);
 
     const ada = await addPlayer("Ada", 77);
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: ada.id, tagNumber: 12 },
       ip: freshIp(),
@@ -483,28 +500,295 @@ describe("score editing", () => {
   });
 });
 
-describe("closing check-in", () => {
-  async function scoringRound() {
+// The second step: an admin — the person at the round collecting physical tags
+// and pool money — confirming who is actually playing. A signup is an
+// announcement; only a check-in puts someone in the field.
+describe("two-step check-in", () => {
+  async function roundWithSignups() {
     const round = await openRound();
     const rey = await addPlayer("Rey", 12);
-    const entry = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const sam = await addPlayer("Sam", 40);
+    const entries = [
+      await signUp(round.id, round.joinCode!, { playerId: rey.id, tagNumber: 12 }, freshIp()),
+      await signUp(round.id, round.joinCode!, { playerId: sam.id, tagNumber: 40 }, freshIp()),
+    ];
+    return { round, entries, players: { rey, sam } };
+  }
+
+  test("a signup is counted apart from the field", async () => {
+    const { round, entries } = await roundWithSignups();
+    const before = await api("GET", "/api/rounds/live");
+    assert.equal(before.body[0].playerCount, 0, "nobody is in the round yet");
+    assert.equal(before.body[0].pendingCount, 2);
+
+    await checkIn(round.id, [entries[0].id]);
+    const after = await api("GET", "/api/rounds/live");
+    assert.equal(after.body[0].playerCount, 1);
+    assert.equal(after.body[0].pendingCount, 1);
+  });
+
+  test("a code holder cannot score a signup, and can once it's checked in", async () => {
+    const { round, entries } = await roundWithSignups();
+    const early = await api(
+      "PATCH",
+      `/api/rounds/${round.id}/entries/${entries[0].id}`,
+      { code: round.joinCode!, body: { score: 54 }, ip: freshIp() }
+    );
+    assert.equal(early.status, 409);
+    assert.match(early.body.error, /check in/i);
+
+    await checkIn(round.id, [entries[0].id]);
+    const ok = await api(
+      "PATCH",
+      `/api/rounds/${round.id}/entries/${entries[0].id}`,
+      { code: round.joinCode!, body: { score: 54 }, ip: freshIp() }
+    );
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.score, 54);
+  });
+
+  test("a checked-in player's tag and pools are locked to code holders", async () => {
+    // What the person at the table verified: the physical tag they saw and the
+    // dollar they took. A player editing either afterwards would put the
+    // record out of step with the cash box.
+    const { round, entries } = await roundWithSignups();
+    await checkIn(round.id, [entries[0].id]);
+
+    for (const body of [{ tagNumber: 99 }, { acePool: true }, { ctp: true }]) {
+      const res = await api(
+        "PATCH",
+        `/api/rounds/${round.id}/entries/${entries[0].id}`,
+        { code: round.joinCode!, body, ip: freshIp() }
+      );
+      assert.equal(res.status, 409, JSON.stringify(body));
+      assert.match(res.body.error, /locked/i);
+    }
+
+    // An admin still can — corrections are theirs to make.
+    const fixed = await api(
+      "PATCH",
+      `/api/admin/rounds/${round.id}/entries/${entries[0].id}`,
+      { admin: true, body: { acePool: true } }
+    );
+    assert.equal(fixed.status, 200);
+    assert.equal(fixed.body.acePool, true);
+  });
+
+  test("a signup can still fix its own tag and pools", async () => {
+    const { round, entries } = await roundWithSignups();
+    const res = await api(
+      "PATCH",
+      `/api/rounds/${round.id}/entries/${entries[0].id}`,
+      { code: round.joinCode!, body: { tagNumber: 99, acePool: true }, ip: freshIp() }
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.body.incomingNumber, 99);
+    assert.equal(res.body.acePool, true);
+  });
+
+  test("an admin patch that names no known field is refused, not fatal", async () => {
+    // The admin route takes incomingTagId, not tagNumber. Naming the wrong
+    // field used to build an empty patch, and drizzle throws on .set({}) —
+    // inside an async handler with no catch, that took the whole API down
+    // mid-round. Found by walking this flow by hand on the dev stack.
+    const { round, entries } = await roundWithSignups();
+    const res = await api(
+      "PATCH",
+      `/api/admin/rounds/${round.id}/entries/${entries[0].id}`,
+      { admin: true, body: { tagNumber: 99 } }
+    );
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /nothing to update/i);
+
+    // Still serving.
+    const health = await api("GET", `/api/rounds/${round.id}`);
+    assert.equal(health.status, 200);
+  });
+
+  test("checking in is admin work — a code holder cannot do it", async () => {
+    const { round, entries } = await roundWithSignups();
+    const res = await api("POST", `/api/admin/rounds/${round.id}/checkin`, {
+      code: round.joinCode!,
+      body: { entryIds: [entries[0].id] },
+      ip: freshIp(),
+    });
+    assert.equal(res.status, 401, "the round code authorizes nothing under /admin");
+
+    const detail = await api("GET", `/api/rounds/${round.id}`);
+    assert.ok(detail.body.entries.every((e: any) => e.checkedIn === false));
+  });
+
+  test("an admin can undo a mis-tap", async () => {
+    const { round, entries } = await roundWithSignups();
+    await checkIn(round.id, [entries[0].id]);
+    const res = await api("POST", `/api/admin/rounds/${round.id}/checkin`, {
+      admin: true,
+      body: { entryIds: [entries[0].id], checkedIn: false },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.entries[0].checkedIn, false);
+  });
+
+  test("check-in is scoped to its own round", async () => {
+    const { entries } = await roundWithSignups();
+    const other = await openRound({ date: "2026-07-29", course: "Elsewhere" });
+    const res = await api("POST", `/api/admin/rounds/${other.id}/checkin`, {
+      admin: true,
+      body: { entryIds: [entries[0].id] },
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("checking in is refused once check-in closes", async () => {
+    const { round, entries } = await roundWithSignups();
+    await checkIn(round.id, [entries[0].id]);
+    await api("PATCH", `/api/admin/rounds/${round.id}`, {
+      admin: true,
+      body: { status: "scoring" },
+    });
+    const res = await api("POST", `/api/admin/rounds/${round.id}/checkin`, {
+      admin: true,
+      body: { entryIds: [entries[1].id] },
+    });
+    assert.equal(res.status, 409);
+  });
+
+  test("closing check-in drops whoever never checked in", async () => {
+    const { round, entries } = await roundWithSignups();
+    await checkIn(round.id, [entries[0].id]);
+
+    const closed = await api("PATCH", `/api/admin/rounds/${round.id}`, {
+      admin: true,
+      body: { status: "scoring" },
+    });
+    assert.equal(closed.status, 200);
+    assert.equal(closed.body.droppedPending, 1);
+
+    const detail = await api("GET", `/api/rounds/${round.id}`);
+    assert.equal(detail.body.entries.length, 1);
+    assert.equal(detail.body.entries[0].playerName, "Rey");
+  });
+
+  test("finalizing drops them too, and ranks only the field", async () => {
+    // The other door out of the check-in phase: an admin can finalize straight
+    // from "open" without closing check-in first.
+    const { round, entries } = await roundWithSignups();
+    await checkIn(round.id, [entries[0].id]);
+    await api("PATCH", `/api/rounds/${round.id}/entries/${entries[0].id}`, {
+      code: round.joinCode!,
+      body: { score: 54 },
+      ip: freshIp(),
+    });
+
+    const res = await api("POST", `/api/admin/rounds/${round.id}/finalize`, {
+      admin: true,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.droppedPending, 1);
+    assert.equal(res.body.entries.length, 1);
+
+    // The pool was {12} — Rey's alone. Sam signed up and never checked in, so
+    // #40 never entered the redistribution and is still theirs.
+    const standings = await api("GET", "/api/standings");
+    const byName = new Map(
+      standings.body.map((r: any) => [r.playerName, r.tagNumber])
+    );
+    assert.equal(byName.get("Rey"), 12);
+    assert.equal(byName.get("Sam"), 40, "a signup's tag is not in the pool");
+  });
+
+  test("refuses to finalize a round of signups nobody checked in", async () => {
+    const { round } = await roundWithSignups();
+    const res = await api("POST", `/api/admin/rounds/${round.id}/finalize`, {
+      admin: true,
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /checked in/i);
+
+    // And it left the round alone rather than half-finalizing it.
+    const detail = await api("GET", `/api/rounds/${round.id}`);
+    assert.equal(detail.body.status, "open");
+  });
+
+  test("an admin adding a player checks them in outright", async () => {
+    const round = await openRound();
+    const ada = await addPlayer("Ada", 77);
+    const [tag] = await db.select().from(tags).where(eq(tags.number, 77));
+    const res = await api("POST", `/api/admin/rounds/${round.id}/entries`, {
+      admin: true,
+      body: { playerId: ada.id, incomingTagId: tag.id },
+    });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.checkedIn, true);
+  });
+
+  test("the old /checkin path still signs a player up", async () => {
+    // A service-worker-cached index.html on somebody's phone is still posting
+    // here. It must keep working, and must mean what /signup means.
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
       code: round.joinCode!,
       body: { playerId: rey.id, tagNumber: 12 },
       ip: freshIp(),
     });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.checkedIn, false);
+  });
+
+  test("no response carries who checked a player in", async () => {
+    // checked_in_by is an admin's email. Same rule as the join code: the fact
+    // is public, the value is not.
+    const { round, entries } = await roundWithSignups();
+    const confirmed = await checkIn(round.id, [entries[0].id]);
+    assert.ok(!JSON.stringify(confirmed).includes(ADMIN_EMAIL));
+
+    const paths = [
+      "/api/rounds",
+      "/api/rounds/live",
+      `/api/rounds/${round.id}`,
+    ];
+    for (const path of paths) {
+      const res = await api("GET", path);
+      assert.ok(
+        !JSON.stringify(res.body).includes(ADMIN_EMAIL),
+        `${path} leaked the checking-in admin`
+      );
+    }
+
+    const finalized = await api("POST", `/api/admin/rounds/${round.id}/finalize`, {
+      admin: true,
+    });
+    assert.ok(
+      !JSON.stringify(finalized.body).includes(ADMIN_EMAIL),
+      "finalize leaked the checking-in admin"
+    );
+  });
+});
+
+describe("closing check-in", () => {
+  async function scoringRound() {
+    const round = await openRound();
+    const rey = await addPlayer("Rey", 12);
+    const entry = await enterRound(
+      round.id,
+      round.joinCode!,
+      { playerId: rey.id, tagNumber: 12 },
+      freshIp()
+    );
     const patched = await api("PATCH", `/api/admin/rounds/${round.id}`, {
       admin: true,
       body: { status: "scoring" },
     });
     assert.equal(patched.status, 200);
-    return { round, entry: entry.body };
+    return { round, entry };
   }
 
-  test("blocks new check-ins", async () => {
+  test("blocks new signups", async () => {
     // A late joiner changes the tag pool, and so what everyone else can win.
     const { round } = await scoringRound();
     const sam = await addPlayer("Sam", 40);
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: sam.id, tagNumber: 40 },
       ip: freshIp(),
@@ -522,6 +806,10 @@ describe("closing check-in", () => {
     );
     assert.equal(del.status, 409);
 
+    // Two rules point the same way here: the round is past check-in, and this
+    // entry is checked in. The check-in lock is what answers first now — any
+    // entry that survives into the scoring phase is by definition confirmed,
+    // since closing check-in drops the rest.
     const retag = await api(
       "PATCH",
       `/api/rounds/${round.id}/entries/${entry.id}`,
@@ -548,19 +836,18 @@ describe("finalizing a live round", () => {
     const rey = await addPlayer("Rey", 12);
     const sam = await addPlayer("Sam", 40);
     const ada = await addPlayer("Ada", 77);
-    const ids: number[] = [];
     for (const [p, tag, score] of [
       [rey, 12, 61],
       [sam, 40, 54],
       [ada, 77, 58],
     ] as const) {
-      const e = await api("POST", `/api/rounds/${round.id}/checkin`, {
-        code: round.joinCode!,
-        body: { playerId: p.id, tagNumber: tag },
-        ip: freshIp(),
-      });
-      ids.push(e.body.id);
-      await api("PATCH", `/api/rounds/${round.id}/entries/${e.body.id}`, {
+      const e = await enterRound(
+        round.id,
+        round.joinCode!,
+        { playerId: p.id, tagNumber: tag },
+        freshIp()
+      );
+      await api("PATCH", `/api/rounds/${round.id}/entries/${e.id}`, {
         code: round.joinCode!,
         body: { score },
         ip: freshIp(),
@@ -593,7 +880,7 @@ describe("finalizing a live round", () => {
     const { round } = await playedRound();
     await api("POST", `/api/admin/rounds/${round.id}/finalize`, { admin: true });
 
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: 1, tagNumber: 5 },
       ip: freshIp(),
@@ -726,15 +1013,18 @@ describe("with the code gate off", () => {
     delete process.env.REQUIRE_ROUND_CODE;
   });
 
-  test("check-in, scoring and removal need no code", async () => {
+  test("signup, scoring and removal need no code", async () => {
     const round = await openRound();
     const rey = await addPlayer("Rey", 12);
 
-    const entry = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const entry = await api("POST", `/api/rounds/${round.id}/signup`, {
       body: { playerId: rey.id, tagNumber: 12 },
       ip: freshIp(),
     });
     assert.equal(entry.status, 201);
+    // Checking in is admin work either way — the code gate was never what
+    // guarded it, so dropping the code doesn't hand it to a player.
+    await checkIn(round.id, [entry.body.id]);
 
     const scored = await api(
       "PATCH",
@@ -762,7 +1052,7 @@ describe("with the code gate off", () => {
     // to rate limit, and a stale code in a bookmarked link must not lock its
     // owner out of a round they're allowed to write to.
     for (let i = 0; i < 12; i++) {
-      const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+      const res = await api("POST", `/api/rounds/${round.id}/signup`, {
         code: "ZZZZ",
         body: { playerId: rey.id, tagNumber: 12 },
         ip,
@@ -779,7 +1069,7 @@ describe("with the code gate off", () => {
       body: { action: "revoke" },
     });
 
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       body: { playerId: rey.id, tagNumber: 12 },
       ip: freshIp(),
     });
@@ -794,7 +1084,7 @@ describe("with the code gate off", () => {
       .set({ codeExpiresAt: new Date(Date.now() - 1000) })
       .where(eq(rounds.id, round.id));
 
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       body: { playerId: rey.id, tagNumber: 12 },
       ip: freshIp(),
     });
@@ -804,13 +1094,10 @@ describe("with the code gate off", () => {
   test("a finalized round takes no more writes", async () => {
     const round = await openRound();
     const rey = await addPlayer("Rey", 12);
-    await api("POST", `/api/rounds/${round.id}/checkin`, {
-      body: { playerId: rey.id, tagNumber: 12 },
-      ip: freshIp(),
-    });
+    await enterRound(round.id, undefined, { playerId: rey.id, tagNumber: 12 }, freshIp());
     await api("POST", `/api/admin/rounds/${round.id}/finalize`, { admin: true });
 
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       body: { playerId: rey.id, tagNumber: 40 },
       ip: freshIp(),
     });
@@ -820,7 +1107,7 @@ describe("with the code gate off", () => {
   test("writes still reach one round's entries and nothing else", async () => {
     const round = await openRound();
     const rey = await addPlayer("Rey", 12);
-    const entry = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const entry = await api("POST", `/api/rounds/${round.id}/signup`, {
       body: { playerId: rey.id, tagNumber: 12 },
       ip: freshIp(),
     });

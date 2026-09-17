@@ -4,6 +4,7 @@ import { closeDb } from "../db/client.js";
 import {
   api,
   addPlayer,
+  enterRound,
   openRound,
   resetDb,
   startTestServer,
@@ -108,7 +109,7 @@ describe("checking in on a tag the app has against someone else", () => {
     await addPlayer("John Roe", 42);
     const round = await openRound();
 
-    const res = await api("POST", `/api/rounds/${round.id}/checkin`, {
+    const res = await api("POST", `/api/rounds/${round.id}/signup`, {
       code: round.joinCode!,
       body: { playerId: jane.id, tagNumber: 42 },
     });
@@ -119,7 +120,7 @@ describe("checking in on a tag the app has against someone else", () => {
     // Deliberate: the code tier reaches this round's entries and nothing else,
     // so standings stay put until an admin finalizes.
     const after = await tagsByName();
-    assert.equal(after["John Roe"], 42, "check-in must not touch tag_holders");
+    assert.equal(after["John Roe"], 42, "a signup must not touch tag_holders");
     assert.equal(after["Jane Doe"], 10);
   });
 
@@ -129,21 +130,22 @@ describe("checking in on a tag the app has against someone else", () => {
     const ann = await addPlayer("Ann Poe", 11);
     const round = await openRound();
 
-    // Jane turns up holding #42 — the app thinks John Roe has it.
-    const janeEntry = await api("POST", `/api/rounds/${round.id}/checkin`, {
-      code: round.joinCode!,
-      body: { playerId: jane.id, tagNumber: 42 },
+    // Jane turns up holding #42 — the app thinks John Roe has it. Both are
+    // checked in: only the field is ranked and redistributed to.
+    const janeEntry = await enterRound(round.id, round.joinCode!, {
+      playerId: jane.id,
+      tagNumber: 42,
     });
-    const annEntry = await api("POST", `/api/rounds/${round.id}/checkin`, {
-      code: round.joinCode!,
-      body: { playerId: ann.id, tagNumber: 11 },
+    const annEntry = await enterRound(round.id, round.joinCode!, {
+      playerId: ann.id,
+      tagNumber: 11,
     });
     // Jane wins, so she takes the lower tag of the pool {11, 42}.
-    await api("PATCH", `/api/rounds/${round.id}/entries/${janeEntry.body.id}`, {
+    await api("PATCH", `/api/rounds/${round.id}/entries/${janeEntry.id}`, {
       code: round.joinCode!,
       body: { score: 50 },
     });
-    await api("PATCH", `/api/rounds/${round.id}/entries/${annEntry.body.id}`, {
+    await api("PATCH", `/api/rounds/${round.id}/entries/${annEntry.id}`, {
       code: round.joinCode!,
       body: { score: 60 },
     });

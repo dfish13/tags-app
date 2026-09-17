@@ -102,6 +102,13 @@ export const rounds = pgTable("rounds", {
 
 // One row per player per round: their incoming tag, score, and (once
 // finalized) the tag they were assigned.
+//
+// A row is created by SIGNING UP and becomes real by being CHECKED IN. Those
+// are two different acts by two different people: any player at the course can
+// sign themselves (or their group) up, but somebody is standing there
+// collecting physical tags and pool money, and only they can say who is
+// actually playing. See checkedInAt below — a row without it is an
+// announcement, not a participant.
 export const roundEntries = pgTable(
   "round_entries",
   {
@@ -122,6 +129,15 @@ export const roundEntries = pgTable(
     // Bumped on every score/pool edit. Lets a live round's pollers tell what
     // changed, and gives the UI a "saved at" to show per row.
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    // Null until the person collecting tags and pool money confirms this
+    // player is really here with the tag and the cash. A row with no timestamp
+    // is a SIGNUP: it holds the player's place and claims their tag number,
+    // but it is not in the field — not in the redistributed pool, not in the
+    // ace/CTP totals, not ranked at finalize, and it takes no score.
+    checkedInAt: timestamp("checked_in_at"),
+    // Which admin checked them in. Audit only, and NEVER served in any
+    // response: it is an email address. Mirrors rounds.createdBy.
+    checkedInBy: text("checked_in_by"),
   },
   (t) => ({
     // A player appears at most once per round.

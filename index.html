@@ -514,6 +514,7 @@
     background: var(--accent); color: var(--accent-text);
     border-radius: 9px; font-weight: 800; font-size: 18px;
     flex-shrink: 0;
+    --bubble-fill: var(--accent);
   }
   /* No score yet, so no tag yet. Dashed and hollow, matching the empty score
      field beside it — the two fill in together as the card comes in. */
@@ -590,11 +591,14 @@
      BORDER box, revealed by a transparent border — so the numeral keeps full
      contrast instead of sitting over yellow and cyan. The fill comes from
      --bubble-fill because the contexts differ: rows are --green, the pinned
-     banner is --accent.
+     banner and the round-history card's won-tag chip are --accent.
+     .tag-out is listed here but the class is only put on the history card's
+     chip — the score list's copy of it is a tag nobody has won yet.
      The selector is (0,3,0) deliberately. `.num.rainbow` alone only ties with
      `.row .num` and `.me-banner .num` — both of which set `background` — and a
      tie is broken by source order, which is far too easy to undo later. */
-  .row .num.rainbow, .me-banner .num.rainbow, .p-head .num.rainbow {
+  .row .num.rainbow, .me-banner .num.rainbow, .p-head .num.rainbow,
+  .row .tag-out.rainbow {
     border: 2px solid transparent;
     background:
       linear-gradient(var(--bubble-fill), var(--bubble-fill)) padding-box,
@@ -995,6 +999,17 @@
       </div>
     </div>
 
+    <!-- Signed up but not yet checked in. Anyone can put themselves on this
+         list; only an admin can take them off it and into the round, because
+         only they are holding the tags and the pool money. -->
+    <div class="card" id="waitingCard" style="display:none">
+      <h2>Waiting to check in (<span id="waitingCount">0</span>)</h2>
+      <p class="hint" id="waitingHint"></p>
+      <div id="waitingList"></div>
+      <button class="btn secondary" id="checkInAllBtn" style="display:none"
+        onclick="checkInAllWaiting()">Check everyone in</button>
+    </div>
+
     <div class="card">
       <h2>Pools</h2>
       <div class="totals">
@@ -1247,6 +1262,10 @@ function normalizeState(s) {
   if (typeof s.roundId !== 'number') s.roundId = null;
   if (typeof s.code !== 'string') s.code = '';
   if (typeof s.roundStatus !== 'string') s.roundStatus = '';
+  // Everyone in a round stored before check-in became a second step WAS in the
+  // field — that was the only thing a player could be. Defaulting to false
+  // would empty a round in progress on the reload after a deploy.
+  for (const p of s.players) if (typeof p.checkedIn !== 'boolean') p.checkedIn = true;
   // Migration and cleanup in one line: everyone who stored a round before
   // 'none' existed has mode 'local', and most of them have an empty one they
   // never meant to start. A local round with anything in it is left alone.
@@ -1583,7 +1602,8 @@ function addPlayer() {
   // catch the common mistakes without a round trip.
   if (isLive()) { checkInPlayer(match, tag, ace, ctp); return; }
 
-  state.players.push({ id: nextId(), rosterId: match.id, name: match.name, tag, ace, ctp, score: null });
+  // A local round has no second step: whoever is running it is the tag table.
+  state.players.push({ id: nextId(), rosterId: match.id, name: match.name, tag, ace, ctp, score: null, checkedIn: true });
   save();
 
   clearAddPlayerForm();
@@ -2140,7 +2160,7 @@ async function addPlayerAndRoster(takeTag) {
     dismissNoMatch();
 
     if (isLive()) { await checkInPlayer(created, tag, ace, ctp, note); return; }
-    state.players.push({ id: nextId(), rosterId: created.id, name: created.name, tag, ace, ctp, score: null });
+    state.players.push({ id: nextId(), rosterId: created.id, name: created.name, tag, ace, ctp, score: null, checkedIn: true });
     save();
     clearAddPlayerForm();
     showCheckinMsg('Added “' + created.name + '” to the roster and this round.' + note, false);
@@ -2232,7 +2252,7 @@ function effectiveScoreOrder() {
 }
 
 function scoreEntryOrder() {
-  return state.players.slice()
+  return fieldPlayers()
     .sort((a, b) => a.name.localeCompare(b.name) || a.tag - b.tag);
 }
 
@@ -2264,18 +2284,37 @@ function resetRound() {
   router();
 }
 
+// Who is actually IN this round. In a live round a player signs themselves up
+// and an admin — the person collecting physical tags and pool money — checks
+// them in; only the second step puts them here. Everything that treats the
+// round as a set of competitors reads this rather than state.players: the tag
+// pool, the pool totals, the ranking, the score list.
+//
+// state.players still holds both, because the check-in list has to show the
+// queue. Local rounds have no queue: those players are checked in on arrival.
+function fieldPlayers() {
+  return state.players.filter(p => p.checkedIn);
+}
+
+// Signed up, waiting on the tag table. Empty in a local round.
+function waitingPlayers() {
+  return state.players.filter(p => !p.checkedIn);
+}
+
 function poolTotals() {
+  const field = fieldPlayers();
   return {
-    ace: state.players.filter(p => p.ace).length,
-    ctp: state.players.filter(p => p.ctp).length
+    ace: field.filter(p => p.ace).length,
+    ctp: field.filter(p => p.ctp).length
   };
 }
 
 // Sort players by score (asc), ties broken by lower incoming tag.
 // DNF players (no score) are ranked last, ordered among themselves by incoming tag.
 function rankedPlayers() {
-  const withScore = state.players.filter(p => p.score !== null);
-  const dnf = state.players.filter(p => p.score === null);
+  const field = fieldPlayers();
+  const withScore = field.filter(p => p.score !== null);
+  const dnf = field.filter(p => p.score === null);
   withScore.sort((a, b) => a.score - b.score || a.tag - b.tag);
   dnf.sort((a, b) => a.tag - b.tag);
   return { withScore, dnf, all: withScore.concat(dnf) };
@@ -2283,7 +2322,9 @@ function rankedPlayers() {
 
 function computeResults() {
   const { all, dnf } = rankedPlayers();
-  const pool = state.players.map(p => p.tag).sort((a, b) => a - b);
+  // The pool is the FIELD's incoming tags. A signup's tag is not in play — if
+  // they never check in, their tag leaves with them.
+  const pool = fieldPlayers().map(p => p.tag).sort((a, b) => a - b);
   // detect ties (same, non-null score) for flagging
   const rows = all.map((p, i) => {
     const isDnf = p.score === null;
@@ -2299,35 +2340,28 @@ function render() {
   renderNoMatch();
 
   const t = poolTotals();
+  const field = fieldPlayers();
+  const waiting = waitingPlayers();
   document.getElementById('aceTotal').textContent = '$' + t.ace;
   document.getElementById('ctpTotal').textContent = '$' + t.ctp;
-  document.getElementById('count').textContent = state.players.length;
+  // The field, not every row: a signup nobody has checked in isn't in the
+  // round, and the waiting list below says so in its own words.
+  document.getElementById('count').textContent = field.length;
 
   // setup list
   const pl = document.getElementById('playerList');
   if (state.players.length === 0) {
     pl.innerHTML = '<div class="empty">No players yet. Add the first one above.</div>';
+  } else if (field.length === 0) {
+    pl.innerHTML = '<div class="empty">Nobody checked in yet.</div>';
   } else {
-    pl.innerHTML = state.players.map(p => {
-      const sel = selectedToRemove.has(p.id);
-      const info = `
-        <div style="flex:1">
-          <div class="name">${esc(p.name)}</div>
-          <div class="badges">${p.ace?'<span class="badge-ace">ACE</span> ':''}${p.ctp?'<span class="badge-ctp">CTP</span>':''}</div>
-        </div>`;
-      if (removeMode) {
-        return `
-      <div class="row selectable ${sel?'selected':''}" onclick="toggleSelect(${p.id})">
-        <input type="checkbox" class="sel-check" ${sel?'checked':''}>
-        <div class="num${ringClass(p.tag)}">${p.tag}</div>${info}
-      </div>`;
-      }
-      return `
-      <div class="row">
-        <div class="num${ringClass(p.tag)}">${p.tag}</div>${info}
-      </div>`;
-    }).join('');
+    pl.innerHTML = field.map(playerRowHtml).join('');
   }
+
+  // The waiting list: signed up, not yet seen by the tag table. Its own card,
+  // not a greyed row in the list above, because these two are answers to
+  // different questions — who is playing, and who still owes a tag.
+  renderWaitingList(waiting);
 
   // remove-mode UI
   const removeBar = document.getElementById('removeBar');
@@ -2335,7 +2369,7 @@ function render() {
   // Live: removing an entry changes the tag pool, so the server allows it only
   // while check-in is open. Don't offer a button that can only 409.
   const canRemove = !isLive() || state.roundStatus === 'open';
-  if ((state.players.length === 0 && !removeMode) || !canRemove) {
+  if ((field.length === 0 && !removeMode) || !canRemove) {
     removeBtn.style.display = 'none';
   } else {
     removeBtn.style.display = '';
@@ -2345,15 +2379,59 @@ function render() {
   document.getElementById('confirmRemoveBtn').textContent =
     'Remove selected (' + selectedToRemove.size + ')';
 
-  // pools, on the scores step
+  // pools, on the scores step. The field only — the money is collected at
+  // check-in, so a signup has paid into nothing yet.
   document.getElementById('aceTotal2').textContent = '$' + t.ace;
   document.getElementById('ctpTotal2').textContent = '$' + t.ctp;
-  const aceNames = state.players.filter(p => p.ace).map(p => `<span class="pill">${esc(p.name)}</span>`).join('') || '<span class="hint">None</span>';
-  const ctpNames = state.players.filter(p => p.ctp).map(p => `<span class="pill">${esc(p.name)}</span>`).join('') || '<span class="hint">None</span>';
+  const aceNames = field.filter(p => p.ace).map(p => `<span class="pill">${esc(p.name)}</span>`).join('') || '<span class="hint">None</span>';
+  const ctpNames = field.filter(p => p.ctp).map(p => `<span class="pill">${esc(p.name)}</span>`).join('') || '<span class="hint">None</span>';
   document.getElementById('aceList').innerHTML = aceNames;
   document.getElementById('ctpList').innerHTML = ctpNames;
 
   renderScoreList();
+}
+
+// One row of the check-in list. Shared by the field and the waiting list, so
+// the same player looks the same before and after the tag table sees them.
+function playerRowHtml(p) {
+  const sel = selectedToRemove.has(p.id);
+  const info = `
+    <div style="flex:1">
+      <div class="name">${esc(p.name)}</div>
+      <div class="badges">${p.ace?'<span class="badge-ace">ACE</span> ':''}${p.ctp?'<span class="badge-ctp">CTP</span>':''}</div>
+    </div>`;
+  if (removeMode) {
+    return `
+  <div class="row selectable ${sel?'selected':''}" onclick="toggleSelect(${p.id})">
+    <input type="checkbox" class="sel-check" ${sel?'checked':''}>
+    <div class="num${ringClass(p.tag)}">${p.tag}</div>${info}
+  </div>`;
+  }
+  // The Check in button is the admin's half of the two-step. A player sees the
+  // same row without it — they can see the queue, they just can't clear it.
+  const confirm = (!p.checkedIn && adminEmail && isLive())
+    ? `<button class="rowbtn" onclick="checkInEntries([${p.id}])">Check in</button>`
+    : '';
+  return `
+  <div class="row">
+    <div class="num${ringClass(p.tag)}">${p.tag}</div>${info}${confirm}
+  </div>`;
+}
+
+// Signed up, waiting on the person with the tags and the cash box. Only ever
+// has anything in it during a live round.
+function renderWaitingList(waiting) {
+  const card = document.getElementById('waitingCard');
+  if (!waiting.length) { card.style.display = 'none'; return; }
+  document.getElementById('waitingCount').textContent = waiting.length;
+  document.getElementById('waitingList').innerHTML = waiting.map(playerRowHtml).join('');
+  const all = document.getElementById('checkInAllBtn');
+  const canConfirm = adminEmail && isLive() && state.roundStatus === 'open';
+  all.style.display = canConfirm && waiting.length > 1 ? '' : 'none';
+  document.getElementById('waitingHint').textContent = canConfirm
+    ? 'Take their tag and pool money, then check them in. Anyone still here when you close check-in is dropped from the round.'
+    : 'Signed up, waiting on the tag table. See whoever is collecting tags and pool money — you can\u2019t enter a score until they check you in.';
+  card.style.display = '';
 }
 
 // The rows for the scores list, in the order the toggle asks for, already
@@ -2413,11 +2491,20 @@ function renderScoreList() {
   title.textContent = 'Scores & tags';
   hint.textContent = 'Lowest score takes the lowest tag. Ties: better incoming tag wins. A preview until you finalize.';
 
-  if (state.players.length === 0) {
+  const waiting = waitingPlayers().length;
+  // The waiting note sits under the list whether or not there is a list, so
+  // someone who has only signed up is told why they can't see their own row.
+  const waitingNote = waiting
+    ? waiting + ' player' + (waiting === 1 ? '' : 's') + ' signed up and waiting to check in — ' +
+      'they\u2019re not in the round until the tag table has them.'
+    : '';
+
+  if (fieldPlayers().length === 0) {
     sl.innerHTML = '<div class="empty">' +
       (isLive() ? 'Nobody is checked in yet.' : 'No players yet — add them in Setup.') + '</div>';
     finalizeBtn.style.display = 'none';
-    dnfHint.style.display = 'none';
+    dnfHint.textContent = waitingNote;
+    dnfHint.style.display = waitingNote ? '' : 'none';
     return;
   }
 
@@ -2439,13 +2526,14 @@ function renderScoreList() {
     score: r.player.score,
     live: isLive()
   })).join('');
-  state.players.forEach(paintScoreField);
+  fieldPlayers().forEach(paintScoreField);
   if (isLive()) renderSaveStates();
   restoreScoreFocus(scoreFocus);
 
-  dnfHint.textContent = dnfCount
+  const dnfNote = dnfCount
     ? dnfCount + ' player(s) with no score take the highest tags.' : '';
-  dnfHint.style.display = dnfCount ? '' : 'none';
+  dnfHint.textContent = [dnfNote, waitingNote].filter(Boolean).join(' ');
+  dnfHint.style.display = dnfHint.textContent ? '' : 'none';
 }
 
 function scoreRowHtml(r) {
@@ -2486,10 +2574,19 @@ function paintOutgoingTags() {
       flag.hidden = !r.tie;
     }
   }
+  // renderScoreList owns this line's full text (it also carries the waiting
+  // note); rebuild it the same way rather than dropping half of it.
+  const waiting = waitingPlayers().length;
+  const parts = [
+    dnfCount ? dnfCount + ' player(s) with no score take the highest tags.' : '',
+    waiting
+      ? waiting + ' player' + (waiting === 1 ? '' : 's') + ' signed up and waiting to check in — ' +
+        'they\u2019re not in the round until the tag table has them.'
+      : ''
+  ].filter(Boolean);
   const dnfHint = document.getElementById('dnfHint');
-  dnfHint.textContent = dnfCount
-    ? dnfCount + ' player(s) with no score take the highest tags.' : '';
-  dnfHint.style.display = dnfCount ? '' : 'none';
+  dnfHint.textContent = parts.join(' ');
+  dnfHint.style.display = parts.length ? '' : 'none';
 }
 
 // ─── API (persistent roster) ──────────────────────────────
@@ -2577,7 +2674,7 @@ async function finalizeRound() {
   if (isLive()) return finalizeLiveRound();
 
   const btn = document.getElementById('finalizeBtn');
-  if (state.players.length === 0) { showFinalizeMsg('Add players first.', true); return; }
+  if (fieldPlayers().length === 0) { showFinalizeMsg('Add players first.', true); return; }
   if (!confirm('Finalize this round? Tag assignments will be saved to the server and locked.')) return;
 
   // Must be signed in as admin (finalize is a write route).
@@ -2598,7 +2695,7 @@ async function finalizeRound() {
       // later or a round wraps up late evening.
       date: state.playDate || localToday(),
       course: state.course || null,
-      players: state.players.map(p => ({
+      players: fieldPlayers().map(p => ({
         playerId: p.rosterId,
         tagNumber: p.tag,
         score: (p.score === undefined ? null : p.score),
@@ -2755,7 +2852,11 @@ function entryToPlayer(e) {
     tag: e.incomingNumber,
     ace: !!e.acePool,
     ctp: !!e.ctp,
-    score: (e.score === undefined || e.score === null) ? null : e.score
+    score: (e.score === undefined || e.score === null) ? null : e.score,
+    // The server's `checkedIn` is a boolean derived from checked_in_at; it
+    // never carries WHO did it. Missing on a response from an older server,
+    // where an entry was a participant the moment it existed.
+    checkedIn: e.checkedIn === undefined ? true : !!e.checkedIn
   };
 }
 
@@ -2894,7 +2995,10 @@ function leaveLiveRound(silent, notice) {
   state.mode = restored ? 'local' : 'none';
   state.roundId = null; state.code = ''; state.roundStatus = '';
   save();
-  if (notice) joinNotice = notice;
+  // Leaving with nothing to say clears any notice still pending, so Home comes
+  // back empty rather than painting a card for a stale one — a finalized round
+  // must leave nothing at the top.
+  joinNotice = notice || null;
   // Home, always. Not every notice is actionable — "that round was discarded"
   // has nothing to rejoin — so the caller that DOES want the code box
   // (rejoinPrompt) navigates there itself.
@@ -3154,12 +3258,14 @@ function liveStatusText() {
 function renderLiveBar() {
   const bar = document.getElementById('liveBar');
   if (!isLive() || route !== 'round') { bar.style.display = 'none'; return; }
-  const n = state.players.length;
+  const n = fieldPlayers().length;
+  const waiting = waitingPlayers().length;
   bar.innerHTML = `
     <div class="lb-main">
       <div class="lb-title"><span class="live-dot"></span>${esc(liveRoundLabel())}</div>
       <div class="lb-meta ${liveNotice ? 'warn' : ''}">${esc(liveNotice ||
-        (liveStatusText() + ' · ' + n + ' player' + (n === 1 ? '' : 's')))}</div>
+        (liveStatusText() + ' · ' + n + ' player' + (n === 1 ? '' : 's') +
+         (waiting ? ' · ' + waiting + ' waiting' : '')))}</div>
     </div>
     ${liveNotice
       ? `<button class="linkbtn" onclick="rejoinPrompt()">${REQUIRE_CODE ? 'New code' : 'Rejoin'}</button>`
@@ -3243,6 +3349,7 @@ function renderLiveAdmin() {
   panel.style.display = '';
   const code = adminCode && adminCode.joinCode;
   const n = adminRound.playerCount || 0;
+  const waiting = adminRound.pendingCount || 0;
   const open = adminRound.status === 'open';
   const where = adminRound.course || 'Live round';
   // The round's code doubles as its open/closed flag, so `code` still drives
@@ -3250,7 +3357,8 @@ function renderLiveAdmin() {
   // code nobody has to type and talk about the round being open instead.
   panel.innerHTML = `
     <p class="hint">${esc(where)}${adminRound.date ? ' · ' + esc(fmtDate(adminRound.date)) : ''} ·
-      ${open ? 'check-in open' : 'check-in closed · scoring'} · ${n} checked in</p>
+      ${open ? 'check-in open' : 'check-in closed · scoring'} · ${n} checked in${
+        waiting ? ' · ' + waiting + ' waiting' : ''}</p>
     <div class="code-out${code && REQUIRE_CODE ? '' : ' none'}">${
       REQUIRE_CODE
         ? (code ? esc(code) : 'No code — nobody can join or save a score until you issue one.')
@@ -3381,16 +3489,36 @@ async function revokeLiveCode() {
 async function closeCheckin(roundId) {
   const id = roundId || (adminRound && adminRound.id);
   if (!id) return;
-  if (!confirm('Close check-in? Nobody new can join, but everyone already in can still enter scores.')) return;
+  // Name them. Closing check-in drops whoever signed up and never turned up at
+  // the tag table, and "3 players were removed" after the fact is no use to
+  // someone who could have walked over and found them.
+  const waiting = (isLive() && state.roundId === id) ? waitingPlayers()
+    : (adminRound && adminRound.id === id && adminRound.pendingCount ? 'unknown' : []);
+  let warning = '';
+  if (waiting === 'unknown') {
+    warning = '\n\n' + adminRound.pendingCount + ' player(s) signed up but were never ' +
+      'checked in. Closing check-in removes them from the round.';
+  } else if (waiting.length) {
+    warning = '\n\n' + waiting.map(p => p.name).join(', ') +
+      (waiting.length === 1 ? ' signed up but was' : ' signed up but were') +
+      ' never checked in. Closing check-in removes them from the round.';
+  }
+  if (!confirm('Close check-in? Nobody new can join, but everyone already in can still enter scores.' + warning)) return;
   try {
-    await patchAdmin('/admin/rounds/' + id, { status: 'scoring' });
-    if (adminRound && adminRound.id === id) adminRound.status = 'scoring';
+    const res = await patchAdmin('/admin/rounds/' + id, { status: 'scoring' });
+    const dropped = (await res.json().catch(() => ({}))).droppedPending || 0;
+    if (adminRound && adminRound.id === id) {
+      adminRound.status = 'scoring';
+      adminRound.pendingCount = 0;
+    }
     if (isLive() && state.roundId === id) {
       state.roundStatus = 'scoring';
+      state.players = fieldPlayers();  // the server just deleted the rest
       save();
       render();
     }
-    showLiveAdminMsg('Check-in closed — scoring only.', false);
+    showLiveAdminMsg('Check-in closed — scoring only.' +
+      (dropped ? ' ' + dropped + ' player(s) who never checked in were removed.' : ''), false);
     renderLiveAdmin();
   } catch (e) {
     if (route === 'admin') liveAdminError(e);
@@ -3465,10 +3593,11 @@ function showLiveAdminMsg(text, isError) {
 // took a tag off someone, so the two facts land in one message.
 async function checkInPlayer(match, tag, ace, ctp, note) {
   const btn = document.getElementById('pAddBtn');
+  const asAdmin = !!adminEmail;
   btn.disabled = true;
-  showCheckinMsg('Checking in ' + match.name + '…', false);
+  showCheckinMsg((asAdmin ? 'Checking in ' : 'Signing up ') + match.name + '…', false);
   try {
-    const entry = await liveFetch('/rounds/' + state.roundId + '/checkin', {
+    const entry = await liveFetch('/rounds/' + state.roundId + '/signup', {
       method: 'POST',
       body: { playerId: match.id, tagNumber: tag, acePool: ace, ctp }
     });
@@ -3476,14 +3605,77 @@ async function checkInPlayer(match, tag, ace, ctp, note) {
     state.players = sortLivePlayers(state.players.concat(entryToPlayer(entry)));
     save();
     clearAddPlayerForm();
-    showCheckinMsg(match.name + ' checked in with tag #' + tag + '.' + (note || ''), false);
     render();
+    // An admin adding someone IS the check-in — they are the authority the
+    // second step exists for, so don't make them tap their own row afterwards.
+    // Two requests rather than one because the signup is code-gated and the
+    // check-in is Access-gated; they cannot be the same call.
+    if (asAdmin) {
+      // Its own try: the signup already landed, so a failure here is "signed
+      // up but not confirmed" — a real, recoverable state with its own row in
+      // the waiting list, not a failed add.
+      try {
+        await checkInEntries([entry.id], true);
+        showCheckinMsg(match.name + ' checked in with tag #' + tag + '.' + (note || ''), false);
+      } catch (e) {
+        if (String(e.message).includes('Failed to fetch')) {
+          showCheckinMsg('Signed up, but admin sign-in is needed to check them in — redirecting…', true);
+          setTimeout(adminSignIn, 800);
+        } else {
+          showCheckinMsg(match.name + ' is signed up, but check-in failed: ' + e.message +
+            ' Tap Check in on their row.', true);
+        }
+      }
+    } else {
+      showCheckinMsg(match.name + ' is signed up with tag #' + tag + '. ' +
+        'See the tag table to check in.' + (note || ''), false);
+    }
   } catch (e) {
     showCheckinMsg(liveErrorText(e), true);
     handleLiveError(e);
   } finally {
     btn.disabled = false;
   }
+}
+
+// The admin half of the two-step: confirm these signups are really here, with
+// a tag and a dollar for each pool. Access-gated, so it goes through postAdmin
+// rather than liveFetch — an admin acts as an admin, never as a code holder.
+//
+// `quiet` is for the call that follows an admin's own add, which reports in
+// the add form's own message line instead.
+async function checkInEntries(entryIds, quiet) {
+  try {
+    const res = await postAdmin('/admin/rounds/' + state.roundId + '/checkin',
+      { entryIds });
+    const { entries } = await res.json();
+    lastLiveWriteAt = Date.now();
+    const byId = new Map(entries.map(e => [e.id, entryToPlayer(e)]));
+    state.players = sortLivePlayers(state.players.map(p => byId.get(p.id) || p));
+    save();
+    render();
+    if (!quiet) {
+      showCheckinMsg(entries.length === 1
+        ? entries[0].playerName + ' is checked in.'
+        : entries.length + ' players checked in.', false);
+    }
+  } catch (e) {
+    if (quiet) throw e;  // the caller reports it in its own message line
+    if (String(e.message).includes('Failed to fetch')) {
+      showCheckinMsg('Admin sign-in required — redirecting…', true);
+      setTimeout(adminSignIn, 800);
+    } else {
+      showCheckinMsg('Could not check in: ' + e.message, true);
+    }
+  }
+}
+
+function checkInAllWaiting() {
+  const waiting = waitingPlayers();
+  if (!waiting.length) return;
+  if (!confirm('Check in all ' + waiting.length + ' waiting players? ' +
+    'Only do this once you have everyone\u2019s tag and pool money.')) return;
+  checkInEntries(waiting.map(p => p.id));
 }
 
 async function removeLiveEntries(ids) {
@@ -3641,7 +3833,8 @@ function onFlushFailed(op, e) {
     return;
   }
 
-  // 409 — the round moved on (entry gone, check-in closed, finalized).
+  // 409 — the round moved on (entry gone, un-checked-in, check-in closed,
+  // finalized).
   // Replaying cannot fix that, so drop the op and clear its indicator rather
   // than leave 'not saved' on a row the reconciling poll is about to correct.
   if (status === 409) {
@@ -3720,7 +3913,9 @@ async function pollLiveRound() {
 // typed into right now: those keep their local value until their PATCH lands.
 function mergeLiveRound(round) {
   if (!isLive()) return;
-  if (round.status === 'finalized') { applyFinalizedRound(round); render(); return; }
+  // applyFinalizedRound leaves the round entirely — it navigates and renders
+  // on the way out, so there is nothing to merge and nothing to repaint.
+  if (round.status === 'finalized') { applyFinalizedRound(round); return; }
 
   state.roundStatus = round.status;
   state.course = round.course || '';
@@ -3745,26 +3940,32 @@ function mergeLiveRound(round) {
   render();
 }
 
+// The round is over. Everyone leaves it — the admin who pressed Finalize and
+// every phone that learns about it on its next poll — rather than sitting in a
+// live round that has already ended. A device left in live mode kept Home's
+// "you're in a live round" card up until somebody thought to tap Leave, which
+// nobody ever did.
+//
+// The payoff isn't lost: the round is opened in History on the way past, so
+// the first thing on screen is still the tag you just won. Home itself goes
+// quiet — no live card, no leftover notice.
 function applyFinalizedRound(round) {
   stopLivePolling();
   // A finalized round takes no further score writes, so anything queued is
-  // moot — the server's numbers below are now the record.
+  // moot — the server's numbers are now the record.
   clearOutbox();
-  state.roundStatus = 'finalized';
-  state.players = sortLivePlayers((round.entries || []).map(entryToPlayer));
-  state.course = round.course || state.course;
-  state.finalized = {
-    roundId: round.id,
-    course: round.course || '',
-    rows: (round.entries || []).map(e => ({
-      name: e.playerName,
-      assignedNumber: e.assignedNumber,
-      incomingNumber: e.incomingNumber,
-      score: e.score,
-      dnf: e.score === null || e.score === undefined
-    })).sort((a, b) => a.assignedNumber - b.assignedNumber)
-  };
-  save();
+  // Home paints from `liveRounds` before loadLiveRounds() can refresh it, so
+  // drop the round here or the card flashes back for one frame.
+  liveRounds = liveRounds.filter(r => r.id !== round.id);
+  // Read by renderHistory() during the router() run inside leaveLiveRound().
+  // The month picker is cleared too: this round is today's, and a month chosen
+  // earlier would filter it straight back out.
+  historyMonth = null;
+  historyOpenId = round.id;
+  // No notice: a notice keeps renderLiveCard() painting a card, and the whole
+  // point is that Home has nothing at the top once the round is over. The
+  // round's own results, open in History right below, say it better anyway.
+  leaveLiveRound(true);
 }
 
 // Finalize a live round. Admin-only (it redistributes tags and clears the
@@ -3772,7 +3973,7 @@ function applyFinalizedRound(round) {
 // the round and its entries are already on the server.
 async function finalizeLiveRound() {
   const btn = document.getElementById('finalizeBtn');
-  if (state.players.length === 0) { showFinalizeMsg('Nobody is checked in yet.', true); return; }
+  if (fieldPlayers().length === 0) { showFinalizeMsg('Nobody has been checked in yet.', true); return; }
   if (!confirm('Finalize this round? Tags are redistributed and the round stops accepting scores.')) return;
 
   const who = await fetchAdminIdentity();
@@ -3783,12 +3984,12 @@ async function finalizeLiveRound() {
   try {
     await postAdmin('/admin/rounds/' + state.roundId + '/finalize', {});
     // That response carries raw entry rows (no names, no tag numbers), so read
-    // the round back for the enriched entries the results view renders.
+    // the round back for the results History is about to show.
     const res = await fetch(API_BASE + '/rounds/' + state.roundId);
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    // Leaves the round and navigates Home — no message or render afterwards,
+    // the admin goes where everyone else goes.
     applyFinalizedRound(await res.json());
-    showFinalizeMsg('Round finalized and saved.', false);
-    render();
   } catch (e) {
     if (String(e.message).includes('Failed to fetch')) {
       showFinalizeMsg('Sign-in required — redirecting…', true);
@@ -3857,10 +4058,14 @@ function renderLiveUi() {
   show('exportCard', !live); // a live round is already on the server
   // Nothing to score with nobody in the round, and the step it leads to would
   // just say so. The back link is always there — it's the only way back.
-  show('toScoresBtn', state.players.length > 0);
+  show('toScoresBtn', fieldPlayers().length > 0);
   document.getElementById('stepBackBtn').textContent = live ? '← Check-in' : '← Setup';
-  document.getElementById('addPlayerTitle').textContent = live ? 'Check in a player' : 'Add player';
-  document.getElementById('pAddBtn').textContent = live ? 'Check in' : 'Add player';
+  // Two names for two acts. A player signs someone up; an admin, who is the
+  // one holding the tags and the pool money, checks them in outright.
+  document.getElementById('addPlayerTitle').textContent =
+    !live ? 'Add player' : (adminEmail ? 'Check in a player' : 'Sign up a player');
+  document.getElementById('pAddBtn').textContent =
+    !live ? 'Add player' : (adminEmail ? 'Check in' : 'Sign up');
   // Admin-dependent, not mode-dependent, but it lives here so it re-renders
   // when ensureAdminChecked() resolves. An admin can create a roster player
   // from this card, so don't tell them they can't.
@@ -3881,7 +4086,7 @@ function renderLiveUi() {
   // element in both the preview and finalized branches — so this only decides
   // the hint. See canFinalize().
   const hint = document.getElementById('finalizeHint');
-  const explain = live && !state.finalized && !canFinalize() && state.players.length > 0;
+  const explain = live && !state.finalized && !canFinalize() && fieldPlayers().length > 0;
   hint.textContent = explain ? 'An admin finalizes this round and redistributes the tags.' : '';
   hint.style.display = explain ? '' : 'none';
 }
@@ -4005,7 +4210,8 @@ function importRound() {
     mode: 'local',
     players: payload.players.map((p, i) => ({
       id: i + 1, rosterId: p.rosterId, name: p.name, tag: p.tag,
-      ace: !!p.ace, ctp: !!p.ctp, score: (p.score == null ? null : p.score)
+      ace: !!p.ace, ctp: !!p.ctp, score: (p.score == null ? null : p.score),
+      checkedIn: true  // an exported round is a finished one; everyone in it played
     })),
     course: payload.course || '',
     // Keep the exporter's play date so approval day ≠ play day is recorded
@@ -4290,7 +4496,7 @@ async function loadHistoryDetail(id) {
       (a.assignedNumber ?? 1e9) - (b.assignedNumber ?? 1e9));
     box.innerHTML = rows.map(e => `
       <div class="row">
-        <div class="tag-out">#${e.assignedNumber ?? '—'}</div>
+        <div class="tag-out${ringClass(e.assignedNumber)}">#${e.assignedNumber ?? '—'}</div>
         <div style="flex:1">
           <div class="name">${esc(e.playerName)} ${e.score==null?'<span class="tie-flag">DNF</span>':''}</div>
           <div class="meta">${e.score==null?'No score':'Score '+e.score} · brought #${e.incomingNumber ?? '—'}</div>
@@ -5232,7 +5438,9 @@ async function setRoundStatus(id, status) {
   const ask = reopening
     ? 'Reopen check-in? Players can join again — a late arrival changes the ' +
       'tag pool, and therefore what everyone else can win.'
-    : 'Close check-in? Nobody new can join, but everyone already in can still enter scores.';
+    : 'Close check-in? Nobody new can join, but everyone already in can still ' +
+      'enter scores. Anyone who signed up and was never checked in is removed ' +
+      'from the round.';
   if (!confirm(ask)) return;
   try {
     await patchAdmin('/admin/rounds/' + id, { status });
@@ -5494,15 +5702,31 @@ window.addEventListener('hashchange', router);
 // waiting out the rest of a 15s tick or an outbox backoff. All of these no-op
 // outside live mode, and wakeOutbox() no-ops with nothing queued.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { pollLiveRound(); wakeOutbox(); }
+  if (!document.hidden) { pollLiveRound(); wakeOutbox(); refreshHomeLive(); }
 });
 window.addEventListener('online', () => {
   pollLiveRound();
   renderLiveBar();
   wakeOutbox();
+  refreshHomeLive();
 });
 
+// Home is painted once when you navigate to it and never again. A phone left
+// on it through the end of a round would still be advertising that round
+// hours later — only a reload cleared it. Re-ask on the way back to the tab.
+function refreshHomeLive() {
+  if (route === 'home' && navigator.onLine) loadLiveRounds();
+}
+
 loadConfig();
+
+// Stored mid-round but already finalized: the phone was shut before the poll
+// that would have carried it out of the round, or it was last open under a
+// version that stayed in one. Leave before the first paint, so it never shows
+// a live card for a round that is already over.
+if (isLive() && state.roundStatus === 'finalized') {
+  leaveLiveRound(true);
+}
 
 // Rehydrate the outbox BEFORE the first render, so a reload mid-round paints
 // the affected rows as 'saving…' straight away rather than blank until the

@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { eq, and, inArray, desc, asc, sql, ne } from "drizzle-orm";
+import type { Request, Response, NextFunction } from "express";
+import { eq, and, inArray, desc, asc, sql, ne, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "../db/client.js";
 import { rounds, roundEntries, tags, players } from "../db/schema.js";
@@ -10,7 +11,7 @@ import {
 } from "../middleware/requireRoundCode.js";
 import { generateCode, normalizeCode } from "../lib/roundCode.js";
 import { clientIp } from "../lib/rateLimit.js";
-import { replayTagHolders } from "../lib/tagHolders.js";
+import { replayTagHolders, type DbOrTx } from "../lib/tagHolders.js";
 
 // Columns of `rounds` safe to serve publicly. Spelled out rather than
 // `select()` because the table carries `join_code` (and `client_key`), and
@@ -25,6 +26,17 @@ const roundPublicColumns = {
   joinable: sql<boolean>`(${rounds.joinCode} is not null)`,
 };
 
+// Per-round headcounts, split by the two-step check-in (see schema.ts).
+// `playerCount` has always meant "who is in this round", and that is now the
+// checked-in ones only — a signup nobody confirmed is counted separately
+// rather than folded in, so no caller is silently told a round is bigger than
+// its field. On a finalized round `pendingCount` is always 0: finalize drops
+// whatever is still waiting.
+const headcountColumns = {
+  playerCount: sql<number>`count(${roundEntries.checkedInAt})::int`,
+  pendingCount: sql<number>`(count(*) filter (where ${roundEntries.id} is not null and ${roundEntries.checkedInAt} is null))::int`,
+};
+
 // ---- Public read routes, mounted at /rounds ----
 
 export const roundsRouter = Router();
@@ -37,7 +49,7 @@ roundsRouter.get("/", async (_req, res) => {
       date: rounds.date,
       course: rounds.course,
       status: rounds.status,
-      playerCount: sql<number>`count(${roundEntries.id})::int`,
+      ...headcountColumns,
     })
     .from(rounds)
     .leftJoin(roundEntries, eq(roundEntries.roundId, rounds.id))
@@ -53,7 +65,7 @@ roundsRouter.get("/live", async (_req, res) => {
   const live = await db
     .select({
       ...roundPublicColumns,
-      playerCount: sql<number>`count(${roundEntries.id})::int`,
+      ...headcountColumns,
     })
     .from(rounds)
     .leftJoin(roundEntries, eq(roundEntries.roundId, rounds.id))
@@ -118,15 +130,19 @@ roundsRouter.get("/:id", async (req, res) => {
 
 // ---- Live-round write routes, mounted at /rounds (behind requireRoundCode) ----
 //
-// Anyone holding the round's code can check players in and edit scores —
+// Anyone holding the round's code can sign players up and edit scores —
 // including someone else's, because one person keeps the card for a whole
 // group. The code scopes writes to this round's entries and nothing else;
-// creating and finalizing rounds stay behind Cloudflare Access.
+// creating, CHECKING IN and finalizing stay behind Cloudflare Access.
 
-// Check a player in. Only while status is "open": the redistributed tag pool
-// IS the set of participants' incoming tags, so admitting someone after
-// scoring starts silently changes what every other player can win.
-roundsRouter.post("/:id/checkin", requireRoundCode, async (req, res, next) => {
+// Sign a player up. Only while status is "open": the redistributed tag pool IS
+// the set of participants' incoming tags, so admitting someone after scoring
+// starts silently changes what every other player can win.
+//
+// This does NOT put them in the round — it announces them and claims their tag
+// number. An admin checking them in is what makes them a participant; see
+// POST /admin/rounds/:id/checkin.
+async function signUp(req: Request, res: Response, next: NextFunction) {
   const round = (req as RoundCodeRequest).round!;
   if (round.status !== "open") {
     return res
@@ -161,6 +177,7 @@ roundsRouter.post("/:id/checkin", requireRoundCode, async (req, res, next) => {
       return res.status(400).json({ error: "That player is not on the roster" });
     }
 
+    // checkedInAt deliberately left null: signing up is not being in the round.
     const [created] = await db
       .insert(roundEntries)
       .values({ roundId: round.id, playerId, incomingTagId: tag.id, acePool, ctp })
@@ -168,23 +185,31 @@ roundsRouter.post("/:id/checkin", requireRoundCode, async (req, res, next) => {
     const [entry] = await selectEntries(db, eq(roundEntries.id, created.id));
     res.status(201).json(entry);
   } catch (err) {
-    // Two people checking in at once can both pass the checks above and race
-    // to the insert; the DB constraints are what actually decide. Translate
-    // each into the message that tells the loser what to do.
+    // Two people signing up at once can both pass the checks above and race to
+    // the insert; the DB constraints are what actually decide. Translate each
+    // into the message that tells the loser what to do.
     const which = uniqueViolationConstraint(err);
     if (which?.includes("incoming_tag")) {
       return res.status(409).json({
-        error: `Tag #${tagNumber} is already checked in on this round`,
+        error: `Tag #${tagNumber} is already spoken for on this round`,
       });
     }
     if (which?.includes("player_id")) {
       return res
         .status(409)
-        .json({ error: "That player is already checked in" });
+        .json({ error: "That player is already signed up" });
     }
     next(err); // never throw from an async handler — see /complete below
   }
-});
+}
+
+roundsRouter.post("/:id/signup", requireRoundCode, signUp);
+// The old name for the same act, kept mounted because index.html is served
+// straight off the checkout and a service-worker-cached copy on somebody's
+// phone is still posting here. It does what it always did from the player's
+// side — puts them in the list — and the two-step split is server-side, so an
+// old client stays correct rather than breaking at the tee.
+roundsRouter.post("/:id/checkin", requireRoundCode, signUp);
 
 // Edit an entry: score, and the pools. Allowed while "open" or "scoring" —
 // entering scores is the whole point of the scoring phase.
@@ -198,6 +223,18 @@ roundsRouter.patch(
       return res.status(400).json({ error: "Invalid entry id" });
     }
 
+    // Read first: which fields a player may touch depends on whether this
+    // entry has been checked in, so the two-step state has to be known before
+    // the patch is assembled.
+    const [existing] = await db
+      .select({ checkedInAt: roundEntries.checkedInAt })
+      .from(roundEntries)
+      .where(
+        and(eq(roundEntries.id, entryId), eq(roundEntries.roundId, round.id))
+      );
+    if (!existing) return res.status(404).json({ error: "Entry not found" });
+    const checkedIn = existing.checkedInAt !== null;
+
     const body = req.body as {
       score?: unknown;
       acePool?: unknown;
@@ -207,6 +244,14 @@ roundsRouter.patch(
     const patch: Partial<typeof roundEntries.$inferInsert> = {};
 
     if (body?.score !== undefined) {
+      // A signup nobody has checked in is not in the field: it isn't ranked,
+      // it isn't in the tag pool, and it is dropped when check-in closes. A
+      // score on it would be a number for a round this player isn't playing.
+      if (!checkedIn) {
+        return res.status(409).json({
+          error: "Check in at the tag table before entering a score",
+        });
+      }
       if (body.score === null || body.score === "") {
         patch.score = null; // DNF / not finished
       } else {
@@ -221,6 +266,21 @@ roundsRouter.patch(
         patch.score = score;
       }
     }
+    // The tag and the pool flags are what the person at the table verified:
+    // they saw the physical tag and took a dollar for each pool the player
+    // declared. Letting a player edit either afterwards would make the record
+    // disagree with the cash box. Before check-in they're free to fix a typo,
+    // and an admin can still correct anything through /admin/rounds/:id/entries.
+    const declared =
+      body?.acePool !== undefined ||
+      body?.ctp !== undefined ||
+      body?.tagNumber !== undefined;
+    if (declared && checkedIn) {
+      return res.status(409).json({
+        error: "Tag and pools are locked once you're checked in — ask at the tag table",
+      });
+    }
+
     if (body?.acePool !== undefined) patch.acePool = Boolean(body.acePool);
     if (body?.ctp !== undefined) patch.ctp = Boolean(body.ctp);
 
@@ -268,7 +328,7 @@ roundsRouter.patch(
       if (uniqueViolationConstraint(err)?.includes("incoming_tag")) {
         return res
           .status(409)
-          .json({ error: "Another player is already checked in with that tag" });
+          .json({ error: "Another player already has that tag on this round" });
       }
       next(err);
     }
@@ -300,6 +360,29 @@ roundsRouter.delete("/:id/entries/:entryId", requireRoundCode, async (req, res) 
 
 export const roundsAdminRouter = Router();
 
+// The signed-in admin's email, stamped on the audit columns (rounds.createdBy,
+// round_entries.checkedInBy). requireAdmin has already verified it against the
+// allowlist by the time any handler here runs.
+function adminEmailOf(req: Request): string | null {
+  return (req as Request & { adminEmail?: string }).adminEmail ?? null;
+}
+
+// The raw entry row as the admin routes echo it back. Named columns rather
+// than `returning()`, because the table now carries checked_in_by — an admin's
+// email, which belongs in no response body, admin ones included.
+const entryReturnColumns = {
+  id: roundEntries.id,
+  roundId: roundEntries.roundId,
+  playerId: roundEntries.playerId,
+  incomingTagId: roundEntries.incomingTagId,
+  assignedTagId: roundEntries.assignedTagId,
+  score: roundEntries.score,
+  acePool: roundEntries.acePool,
+  ctp: roundEntries.ctp,
+  updatedAt: roundEntries.updatedAt,
+  checkedIn: sql<boolean>`(${roundEntries.checkedInAt} is not null)`,
+};
+
 // Rank a round's participants and pair them with the redistributed tag pool.
 // Lowest score takes the lowest tag in the pool; ties break on the lower
 // incoming tag; DNFs (no score) rank last among themselves by incoming tag.
@@ -318,6 +401,27 @@ function assignTags<T extends { tagNumber: number; score: number | null }>(
   return ranked.map((entry, i) => ({ entry, assignedNumber: pool[i] }));
 }
 
+// Throw away the signups nobody checked in. Called when a round leaves the
+// check-in phase, by either door — closing check-in, or finalizing straight
+// from "open".
+//
+// Deleted rather than ignored. A pending row left on a finalized round would
+// have a null assignedTagId and still be a round_entry, which is what
+// stats.ts's field averages and the player pages count — so it would quietly
+// pad every field size with people who never played.
+async function dropPendingEntries(tx: DbOrTx, roundId: number) {
+  const dropped = await tx
+    .delete(roundEntries)
+    .where(
+      and(
+        eq(roundEntries.roundId, roundId),
+        isNull(roundEntries.checkedInAt)
+      )
+    )
+    .returning({ id: roundEntries.id });
+  return dropped.length;
+}
+
 // One entry enriched for display. Shared by loadRound and the single-entry
 // responses of the live-round write routes.
 function selectEntries(tx: typeof db, where: ReturnType<typeof eq>) {
@@ -334,6 +438,10 @@ function selectEntries(tx: typeof db, where: ReturnType<typeof eq>) {
       incomingNumber: incoming.number,
       assignedNumber: assigned.number,
       updatedAt: roundEntries.updatedAt,
+      // Whether the tag table has confirmed this player, without carrying WHO
+      // confirmed them — checked_in_by is an admin's email and belongs in no
+      // response. Same shape as `joinable` above, for the same reason.
+      checkedIn: sql<boolean>`(${roundEntries.checkedInAt} is not null)`,
     })
     .from(roundEntries)
     .innerJoin(players, eq(players.id, roundEntries.playerId))
@@ -373,6 +481,7 @@ type RoundPlayerInput = {
 };
 
 roundsAdminRouter.post("/complete", async (req, res, next) => {
+  const adminEmail = adminEmailOf(req);
   const date = String(req.body?.date ?? "").trim();
   if (!date) return res.status(400).json({ error: "date is required" });
   const course = req.body?.course ? String(req.body.course).trim() : null;
@@ -455,6 +564,12 @@ roundsAdminRouter.post("/complete", async (req, res, next) => {
         .returning();
 
       const assignments = assignTags(input);
+      // Checked in on arrival. This is the local-round path: an admin ran the
+      // round on their own phone and is submitting the finished thing, so the
+      // two-step split has already happened off-app — everyone in this payload
+      // played. The alternative, writing signups nobody could ever check in on
+      // an already-finalized round, would be a round with no field.
+      const checkedInAt = new Date();
       await tx.insert(roundEntries).values(
         assignments.map(({ entry, assignedNumber }) => ({
           roundId: round.id,
@@ -464,6 +579,8 @@ roundsAdminRouter.post("/complete", async (req, res, next) => {
           acePool: entry.acePool,
           ctp: entry.ctp,
           assignedTagId: tagIdByNumber.get(assignedNumber)!,
+          checkedInAt,
+          checkedInBy: adminEmail,
         }))
       );
 
@@ -562,7 +679,7 @@ roundsAdminRouter.post("/", async (req, res, next) => {
       .values({
         date,
         course,
-        createdBy: (req as typeof req & { adminEmail?: string }).adminEmail ?? null,
+        createdBy: adminEmailOf(req),
         ...code,
       })
       .returning();
@@ -640,20 +757,29 @@ roundsAdminRouter.patch("/:id", async (req, res) => {
   if (req.body?.course !== undefined)
     patch.course = req.body.course ? String(req.body.course).trim() : null;
   if (req.body?.status !== undefined) patch.status = req.body.status;
-  const updated = await db.transaction(async (tx) => {
+  // Leaving the check-in phase is the tag table saying it's done. Anyone still
+  // only signed up never turned up with a tag and a dollar, so they leave with
+  // the phase — the client names them in its confirm dialog first, and this is
+  // where it actually happens.
+  const leavingCheckin = patch.status === "scoring" || patch.status === "finalized";
+  const result = await db.transaction(async (tx) => {
     const [row] = await tx
       .update(rounds)
       .set(patch)
       .where(eq(rounds.id, id))
       .returning();
+    if (!row) return null;
+    const droppedPending = leavingCheckin
+      ? await dropPendingEntries(tx, id)
+      : 0;
     // The date is this round's position in the event log, so correcting it can
     // move standings — a round moved from March to today now beats everything
     // in between. Course is inert.
-    if (row && patch.date !== undefined) await replayTagHolders(tx);
-    return row;
+    if (patch.date !== undefined) await replayTagHolders(tx);
+    return { row, droppedPending };
   });
-  if (!updated) return res.status(404).json({ error: "Round not found" });
-  res.json(updated);
+  if (!result) return res.status(404).json({ error: "Round not found" });
+  res.json({ ...result.row, droppedPending: result.droppedPending });
 });
 
 // Delete a round (entries cascade). Replaying afterwards is what puts the tags
@@ -689,16 +815,89 @@ roundsAdminRouter.post("/:id/entries", async (req, res) => {
   const ctp = Boolean(req.body?.ctp);
 
   try {
+    // An admin adding someone IS the check-in — they are the authority the
+    // second step exists for, so making them sign the player up and then
+    // confirm their own action would be a round trip for nothing.
     const [created] = await db
       .insert(roundEntries)
-      .values({ roundId, playerId, incomingTagId, acePool, ctp })
-      .returning();
+      .values({
+        roundId,
+        playerId,
+        incomingTagId,
+        acePool,
+        ctp,
+        checkedInAt: new Date(),
+        checkedInBy: adminEmailOf(req),
+      })
+      .returning(entryReturnColumns);
     res.status(201).json(created);
   } catch {
     res
       .status(409)
       .json({ error: "Player already entered in this round" });
   }
+});
+
+// Check signed-up players in — the second half of the two-step, and the only
+// route that performs it.
+//
+// Admin-only on purpose: there is a real person at the round collecting
+// physical tags and pool money, and this is them saying who actually handed
+// them over. A code holder must not be able to confirm themselves, which is
+// exactly why this lives under /admin and the signup route doesn't.
+//
+// Takes a list rather than one id per request: the collector works through a
+// queue of arrivals on course wifi, and one round trip for six people beats
+// six.
+roundsAdminRouter.post("/:id/checkin", async (req, res) => {
+  const roundId = Number(req.params.id);
+  const [round] = await db.select().from(rounds).where(eq(rounds.id, roundId));
+  if (!round) return res.status(404).json({ error: "Round not found" });
+  // Same rule as signing up, and for the same reason: the redistributed pool
+  // is the set of participants' incoming tags, so adding one after scoring
+  // starts changes what everyone else can win.
+  if (round.status !== "open") {
+    return res
+      .status(409)
+      .json({ error: "Check-in is closed for this round" });
+  }
+
+  const raw = (req.body as { entryIds?: unknown })?.entryIds;
+  const entryIds = Array.isArray(raw) ? raw.map(Number) : [];
+  if (entryIds.length === 0 || entryIds.some((n) => !Number.isInteger(n))) {
+    return res.status(400).json({ error: "entryIds must be a list of entry ids" });
+  }
+  // Default true: confirming is what this route is for. False is the undo for
+  // a mis-tap, which puts the player back in the waiting list rather than
+  // deleting a row someone may have already scored against.
+  const checkedIn = (req.body as { checkedIn?: unknown })?.checkedIn !== false;
+
+  const updated = await db
+    .update(roundEntries)
+    .set(
+      checkedIn
+        ? { checkedInAt: new Date(), checkedInBy: adminEmailOf(req) }
+        : { checkedInAt: null, checkedInBy: null }
+    )
+    .where(
+      and(
+        eq(roundEntries.roundId, roundId),
+        inArray(roundEntries.id, entryIds)
+      )
+    )
+    .returning({ id: roundEntries.id });
+
+  if (updated.length === 0) {
+    return res.status(404).json({ error: "No such entries on this round" });
+  }
+  const entries = await selectEntries(
+    db,
+    inArray(
+      roundEntries.id,
+      updated.map((e) => e.id)
+    )
+  );
+  res.json({ entries });
 });
 
 // Update an entry (score, tag, pools).
@@ -718,13 +917,21 @@ roundsAdminRouter.patch("/:id/entries/:entryId", async (req, res) => {
   if (req.body?.acePool !== undefined) patch.acePool = Boolean(req.body.acePool);
   if (req.body?.ctp !== undefined) patch.ctp = Boolean(req.body.ctp);
 
+  // Same guard as the code-gated route. Without it an admin PATCH naming only
+  // fields this route doesn't take reaches .set({}), which throws inside
+  // drizzle — and an async handler with nothing around it takes the process
+  // down, so one mistyped field name ends the round for everyone.
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: "Nothing to update" });
+  }
+
   const [updated] = await db
     .update(roundEntries)
     .set(patch)
     .where(
       and(eq(roundEntries.id, entryId), eq(roundEntries.roundId, roundId))
     )
-    .returning();
+    .returning(entryReturnColumns);
   if (!updated) return res.status(404).json({ error: "Entry not found" });
   res.json(updated);
 });
@@ -775,6 +982,12 @@ roundsAdminRouter.post("/:id/finalize", async (req, res, next) => {
       if (round.status === "finalized")
         throw new HttpError(409, "Round is already finalized");
 
+      // A round can be finalized straight from "open" without closing
+      // check-in, so this is the second door out of the check-in phase and has
+      // to clear the signups too. Before reading the entries, so the
+      // redistribution can't see them.
+      const droppedPending = await dropPendingEntries(tx, roundId);
+
       const entries = await tx
         .select({
           id: roundEntries.id,
@@ -788,7 +1001,7 @@ roundsAdminRouter.post("/:id/finalize", async (req, res, next) => {
         .where(eq(roundEntries.roundId, roundId));
 
       if (entries.length === 0)
-        throw new HttpError(400, "Round has no entries");
+        throw new HttpError(400, "Nobody has been checked in for this round");
 
       // Same ranking + pool redistribution as the one-shot endpoint.
       const assignments = assignTags(entries);
@@ -820,12 +1033,26 @@ roundsAdminRouter.post("/:id/finalize", async (req, res, next) => {
           status: rounds.status,
         });
 
+      // Named columns, not select(): the row now carries checked_in_by, which
+      // is an admin's email and belongs in no response body. Same rule as
+      // roundPublicColumns keeps the join code out of one.
       const finalEntries = await tx
-        .select()
+        .select({
+          id: roundEntries.id,
+          roundId: roundEntries.roundId,
+          playerId: roundEntries.playerId,
+          incomingTagId: roundEntries.incomingTagId,
+          assignedTagId: roundEntries.assignedTagId,
+          score: roundEntries.score,
+          acePool: roundEntries.acePool,
+          ctp: roundEntries.ctp,
+          updatedAt: roundEntries.updatedAt,
+          checkedIn: sql<boolean>`(${roundEntries.checkedInAt} is not null)`,
+        })
         .from(roundEntries)
         .where(eq(roundEntries.roundId, roundId));
 
-      return { ...finalized, entries: finalEntries };
+      return { ...finalized, entries: finalEntries, droppedPending };
     });
 
     res.json(result);
