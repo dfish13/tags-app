@@ -111,7 +111,14 @@
     gap: 14px;
   }
   header .head-main { min-width: 0; }
-  header h1 { margin: 0; font-size: 19px; font-weight: 700; }
+  header h1 {
+    margin: 0; font-size: 19px; font-weight: 700;
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+  }
+  /* Fixed box so the row never reflows between the emoji fallback and the
+     image, and never while the image is still loading. */
+  header h1 .brand-mark { width: 26px; height: 26px; flex-shrink: 0; display: block; }
+  header h1 #leagueName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   header .sub {
     font-size: 13px; opacity: .85; margin-top: 2px;
     display: flex; align-items: center; gap: 6px;
@@ -874,7 +881,15 @@
   <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false"
     aria-controls="drawer" onclick="openDrawer()"><span class="ham" aria-hidden="true"></span></button>
   <div class="head-main">
-    <h1 id="leagueTitle">🥏 Tags League</h1>
+    <!-- The mark is a per-deployment file at the site root, like the PWA icons
+         beside it. Any league that hasn't dropped one in gets the emoji: the
+         img removes itself on error and reveals the span behind it. -->
+    <h1 id="leagueTitle">
+      <img class="brand-mark" src="/tag-logo-128.png" alt="" width="26" height="26"
+        onerror="this.remove(); document.getElementById('brandEmoji').hidden = false;">
+      <span id="brandEmoji" hidden>🥏</span>
+      <span id="leagueName">Tags League</span>
+    </h1>
     <!-- With no tab strip, this line is how you know which view you're in. -->
     <div class="sub"><span class="phase" id="phaseSub">Home</span><span class="head-live" id="headLive"></span></div>
   </div>
@@ -5690,7 +5705,7 @@ async function loadConfig() {
     if (!res.ok) return;
     const cfg = await res.json();
     if (cfg.leagueName) {
-      document.getElementById('leagueTitle').textContent = '🥏 ' + cfg.leagueName;
+      document.getElementById('leagueName').textContent = cfg.leagueName;
       document.title = cfg.leagueName;
     }
     // Absent (an older API) reads as "required" — the safe direction, since a
