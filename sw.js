@@ -9,12 +9,19 @@
 //   Non-GET requests are never intercepted — a write must never fake success.
 //
 // Bump the version to invalidate every cached entry on next activate.
-const CACHE = 'tags-app-v1';
+const CACHE = 'tags-app-v2';
 const SHELL = ['/', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+// The header mark is per-deployment and may simply not exist. Precached on a
+// best-effort basis so a league without one still gets a working install —
+// addAll rejects as a unit, which would take offline support down with it.
+const OPTIONAL = ['/tag-logo-128.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL).then(() =>
+        Promise.all(OPTIONAL.map((u) => c.add(u).catch(() => {})))))
+      .then(() => self.skipWaiting())
   );
 });
 
