@@ -165,6 +165,13 @@ export const admins = pgTable("admins", {
 // is neither. When the day comes an admin opens a live round as usual; the
 // calendar entry is just the announcement, and it simply drops off the
 // upcoming list once its date passes.
+//
+// Once an admin STARTS a round from an entry, roundId links the two and the
+// round becomes the source of truth for date and course (see
+// routes/calendar.ts). The link lives here, not on `rounds`, on purpose: the
+// table standings are replayed from doesn't change shape, and a round with no
+// calendar entry — opened from Admin, run on one phone, imported — stays the
+// ordinary case it has always been.
 export const calendarEvents = pgTable("calendar_events", {
   id: serial("id").primaryKey(),
   date: date("date").notNull(),
@@ -179,6 +186,16 @@ export const calendarEvents = pgTable("calendar_events", {
   // Free text, like rounds.course — see "Courses" in the README.
   course: text("course"),
   notes: text("notes"),
+  // False for anything that doesn't move tags — a work day, a tournament with
+  // its own format. Only a tags round can be started as a live round, since
+  // finalizing one redistributes tags.
+  tagsRound: boolean("tags_round").default(true).notNull(),
+  // The round this entry became, once started. Unique: one round per entry,
+  // which is also what makes a double-tapped Start harmless. Deleting the
+  // round clears it, putting the entry back to "not started".
+  roundId: integer("round_id")
+    .references(() => rounds.id, { onDelete: "set null" })
+    .unique(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

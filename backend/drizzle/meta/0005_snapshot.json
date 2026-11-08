@@ -1,5 +1,5 @@
 {
-  "id": "5d02f976-466f-4f60-9037-24939926efec",
+  "id": "7e312050-4549-4660-9c9b-e4fe2dbd2132",
   "prevId": "b9e4edf2-797f-43d4-868f-849dbb3d0e20",
   "version": "7",
   "dialect": "postgresql",
@@ -77,6 +77,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "tags_round": {
+          "name": "tags_round",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "round_id": {
+          "name": "round_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -93,9 +106,31 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "calendar_events_round_id_rounds_id_fk": {
+          "name": "calendar_events_round_id_rounds_id_fk",
+          "tableFrom": "calendar_events",
+          "tableTo": "rounds",
+          "columnsFrom": [
+            "round_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "calendar_events_round_id_unique": {
+          "name": "calendar_events_round_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "round_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

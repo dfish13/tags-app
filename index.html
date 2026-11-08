@@ -302,6 +302,9 @@
     color: var(--text);
   }
   input:focus { outline: 2px solid var(--primary-ink); border-color: var(--primary-ink); }
+  /* A field shown for reference but not editable — e.g. a started round's
+     date on its calendar entry. Flat and muted so it doesn't invite a tap. */
+  input:disabled { background: transparent; color: var(--muted); border-style: dashed; }
   /* The app's only <select>. Sized to its content rather than stretched like
      the inputs above, so a picker sitting under a heading doesn't read as a
      field waiting to be filled in. The native popup follows the color-scheme
@@ -557,6 +560,8 @@
     background: var(--accent); color: var(--accent-text);
     border-radius: 4px; padding: 1px 5px; vertical-align: middle; margin-left: 4px;
   }
+  /* Start/Join sits above Edit, so a row with both doesn't grow sideways. */
+  .cal-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
   .cal-notes { font-size: 13px; margin-top: 2px; white-space: pre-line; overflow-wrap: anywhere; }
   .cal-notes a { color: var(--primary-ink); font-weight: 700; }
   /* Free-text note fields read as prose, not as the import box's code. */
@@ -1336,7 +1341,9 @@
   <!-- CALENDAR -->
   <!-- Upcoming rounds. Public to read; a signed-in admin also gets the add
        form and an Edit link per row, so the calendar is edited where it is
-       read rather than from a second copy of it under Admin. -->
+       read rather than from a second copy of it under Admin. On the day, an
+       admin can Start the round from its row; once it's live, everyone gets a
+       Join button there. -->
   <section id="view-calendar" style="display:none">
     <div class="card">
       <h2>Upcoming rounds</h2>
@@ -1361,10 +1368,14 @@
         <input type="text" id="calTitle" autocomplete="off" placeholder="Tags round" maxlength="80">
         <label for="calNotes">Notes</label>
         <textarea id="calNotes" class="plain" maxlength="500" placeholder="Optional — e.g. meet at hole 1, $2 ace pool"></textarea>
-        <p class="hint">Only the date is required. Leave the time empty if it isn’t set yet.</p>
+        <div class="checks"><label><input type="checkbox" id="calTagsRound" checked> Tags round</label></div>
+        <p class="hint">Only the date is required. Leave the time empty if it isn’t set yet.
+          Untick <em>Tags round</em> for anything that doesn’t move tags — a work day,
+          a tournament with its own format — and it won’t offer to start a round.</p>
         <button class="btn" id="calAddBtn" onclick="addCalendarEvent()">Add to calendar</button>
         <div id="calMsg" class="hint" style="display:none"></div>
       </details>
+      <div id="calListMsg" class="hint" style="display:none"></div>
       <div id="calendarList"><div class="empty">Loading…</div></div>
     </div>
   </section>
@@ -5919,7 +5930,9 @@ async function loadNextRound() {
 function renderNextRound() {
   const card = document.getElementById('nextCard');
   if (!card) return;
-  const next = calEvents[0];
+  // The next tags round nobody has started. A started one is already on Home
+  // as the live card right above this, and a work day isn't a "round".
+  const next = calEvents.find(e => e.tagsRound && !e.round);
   card.style.display = next ? '' : 'none';
   if (next) document.getElementById('nextBody').innerHTML = calRow(next, false);
 }
@@ -5952,11 +5965,45 @@ function linkify(text) {
     url => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
 }
 
+// The default title follows what the entry is, so an untitled work day isn't
+// announced as a round.
+function calTitle(ev) { return ev.title || (ev.tagsRound ? 'Tags round' : 'League event'); }
+
+// What the linked round is doing, if there is one. 'live' means players can
+// join right now; 'closed' is a started round that is paused or past check-in
+// with nobody able to join, which still isn't finished.
+function calRoundState(ev) {
+  if (!ev.round) return null;
+  if (ev.round.status === 'finalized') return 'finished';
+  return ev.round.joinable ? 'live' : 'closed';
+}
+
 function calRow(ev, editable) {
   const today = localToday();
-  const soon = ev.date === today ? 'Today'
+  const rs = calRoundState(ev);
+  const soon = rs ? '' : ev.date === today ? 'Today'
     : ev.date === addDaysIso(today, 1) ? 'Tomorrow' : '';
-  const meta = [fmtClock(ev.startTime), ev.course].filter(Boolean).join(' · ');
+  const meta = [fmtClock(ev.startTime), ev.course,
+    rs === 'finished' ? 'finished' : rs === 'closed' ? 'in progress' : ''
+  ].filter(Boolean).join(' · ');
+
+  // One primary action per row, at most. Join is for everyone (admins play
+  // too); Start only for an admin, only on the day, only for a tags round
+  // nobody has started. The server re-checks all of it.
+  let action = '';
+  if (rs === 'live') {
+    // Already in it on this phone: go back to it rather than join again.
+    const mine = isLive() && state.roundId === ev.round.id;
+    action = mine
+      ? `<button class="rowbtn" onclick="location.hash='#/round'">Open</button>`
+      : REQUIRE_CODE
+        ? `<button class="rowbtn" onclick="location.hash='#/join'">Join</button>`
+        : `<button class="rowbtn" onclick="joinLiveRoundById(${ev.round.id})">Join</button>`;
+  } else if (editable && !ev.round && ev.tagsRound && ev.date === today) {
+    action = `<button class="rowbtn" onclick="startCalendarRound(${ev.id})">Start</button>`;
+  }
+  const edit = editable ? `<button class="linkbtn" onclick="openCalEdit(${ev.id})">Edit</button>` : '';
+
   return `
     <div class="row cal-row">
       <div class="cal-date${ev.date === today ? ' today' : ''}" aria-label="${esc(fmtDate(ev.date))}">
@@ -5964,39 +6011,48 @@ function calRow(ev, editable) {
         <span class="day">${+ev.date.slice(8, 10)}</span>
       </div>
       <div class="cal-body">
-        <div class="name">${esc(ev.title || 'Tags round')}${soon ? ` <span class="cal-soon">${soon}</span>` : ''}</div>
+        <div class="name">${esc(calTitle(ev))}${
+          rs === 'live' ? '<span class="live-tag">live</span>'
+          : soon ? ` <span class="cal-soon">${soon}</span>` : ''}</div>
         <div class="meta">${esc(meta || fmtDate(ev.date))}</div>
         ${ev.notes ? `<div class="cal-notes">${linkify(ev.notes)}</div>` : ''}
       </div>
-      ${editable ? `<button class="linkbtn" onclick="openCalEdit(${ev.id})">Edit</button>` : ''}
+      ${action || edit ? `<div class="cal-actions">${action}${edit}</div>` : ''}
     </div>`;
 }
 
 function calEditRow(ev) {
   const id = ev.id;
   const c = 'cal-course-' + id;
+  // Started: the round owns the date and course (it's where the round sits in
+  // the tag history), so they're shown but not editable here.
+  const locked = !!ev.round;
+  const dis = locked ? ' disabled' : '';
   return `
     <div class="row-edit">
       <div class="two-col">
         <div><label for="cal-date-${id}">Date</label>
-          <input type="date" id="cal-date-${id}" value="${esc(ev.date)}"></div>
+          <input type="date" id="cal-date-${id}" value="${esc(ev.date)}"${dis}></div>
         <div><label for="cal-time-${id}">Start time</label>
           <input type="time" id="cal-time-${id}" value="${esc(ev.startTime || '')}"></div>
       </div>
       <label for="${c}">Course</label>
       <div class="typeahead">
-        <input type="text" id="${c}" autocomplete="off" maxlength="100" value="${esc(ev.course || '')}"
+        <input type="text" id="${c}" autocomplete="off" maxlength="100" value="${esc(ev.course || '')}"${dis}
           placeholder="Course name" role="combobox" aria-expanded="false" aria-autocomplete="list"
           aria-controls="${c}Sugs" oninput="onCourseInput('${c}')" onfocus="onCourseInput('${c}')"
           onkeydown="onCourseKey(event,'${c}')" onblur="onCourseBlur('${c}')">
         <div id="${c}Sugs" class="suggestions" role="listbox" style="display:none"></div>
       </div>
       <div id="${c}Hint" class="hint" style="display:none"></div>
+      ${locked ? `<p class="hint">This round has started, so its date and course
+        belong to the round — change them under Admin → Rounds.</p>` : ''}
       <label for="cal-title-${id}">Title</label>
       <input type="text" id="cal-title-${id}" autocomplete="off" maxlength="80"
-        value="${esc(ev.title || '')}" placeholder="Tags round">
+        value="${esc(ev.title || '')}" placeholder="${ev.tagsRound ? 'Tags round' : 'League event'}">
       <label for="cal-notes-${id}">Notes</label>
       <textarea id="cal-notes-${id}" class="plain" maxlength="500">${esc(ev.notes || '')}</textarea>
+      <div class="checks"><label><input type="checkbox" id="cal-tags-${id}"${ev.tagsRound ? ' checked' : ''}${dis}> Tags round</label></div>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn" style="margin:0" onclick="saveCalEdit(${id})">Save</button>
         <button class="btn secondary" style="margin:0" onclick="cancelCalEdit()">Cancel</button>
@@ -6034,12 +6090,13 @@ function readCalFields(ids) {
     course: v(ids.course) || null,
     title: v(ids.title) || null,
     notes: v(ids.notes) || null,
+    tagsRound: document.getElementById(ids.tags).checked,
   };
 }
 
 async function addCalendarEvent() {
   const btn = document.getElementById('calAddBtn');
-  const body = readCalFields({ date: 'calDate', time: 'calTime', course: 'calCourse', title: 'calTitle', notes: 'calNotes' });
+  const body = readCalFields({ date: 'calDate', time: 'calTime', course: 'calCourse', title: 'calTitle', notes: 'calNotes', tags: 'calTagsRound' });
   if (!body.date) { showMsgIn('calMsg', 'Pick a date.', true); return; }
   if (body.date < localToday() && !confirm('That date has already passed, so it won’t show on the calendar. Add it anyway?')) return;
   btn.disabled = true;
@@ -6048,6 +6105,7 @@ async function addCalendarEvent() {
     for (const id of ['calDate', 'calTime', 'calCourse', 'calTitle', 'calNotes']) {
       document.getElementById(id).value = '';
     }
+    document.getElementById('calTagsRound').checked = true;
     hideCourseSugs('calCourse');
     showCourseHint('calCourse');
     showMsgIn('calMsg', 'Added ' + fmtDate(body.date) + '.', false);
@@ -6067,13 +6125,15 @@ async function saveCalEdit(id) {
   if (!ev) return;
   const next = readCalFields({
     date: 'cal-date-' + id, time: 'cal-time-' + id, course: 'cal-course-' + id,
-    title: 'cal-title-' + id, notes: 'cal-notes-' + id
+    title: 'cal-title-' + id, notes: 'cal-notes-' + id, tags: 'cal-tags-' + id
   });
   if (!next.date) { showMsgIn('cal-msg-' + id, 'A date is required.', true); return; }
-  // Only what changed — null is meaningful (it clears the field).
+  // Only what changed — null is meaningful (it clears the field). A started
+  // round's date, course and flag are the round's, so they're never sent.
+  if (ev.round) { delete next.date; delete next.course; delete next.tagsRound; }
   const patch = {};
   for (const k of Object.keys(next)) {
-    if ((next[k] || null) !== (ev[k] || null)) patch[k] = next[k];
+    if (k === 'tagsRound' ? next[k] !== ev[k] : (next[k] || null) !== (ev[k] || null)) patch[k] = next[k];
   }
   if (!Object.keys(patch).length) { cancelCalEdit(); return; }
   try {
@@ -6088,14 +6148,42 @@ async function saveCalEdit(id) {
 async function deleteCalEvent(id) {
   const ev = calEvents.find(e => e.id === id);
   if (!ev) return;
-  const label = (ev.title || 'Tags round') + ' on ' + fmtDate(ev.date) + (ev.course ? ' at ' + ev.course : '');
-  if (!confirm('Remove ' + label + ' from the calendar?')) return;
+  const label = calTitle(ev) + ' on ' + fmtDate(ev.date) + (ev.course ? ' at ' + ev.course : '');
+  // The round is history and standings are built from it, so it stays.
+  const tail = ev.round ? '\n\nThe round itself stays — this only removes it from the calendar.' : '';
+  if (!confirm('Remove ' + label + ' from the calendar?' + tail)) return;
   try {
     await adminSend('DELETE', '/admin/calendar/' + id);
     calEditId = null;
     await afterCalendarChange();
   } catch (e) {
     adminWriteFailed(e, 'cal-msg-' + id);
+  }
+}
+
+// Start the round an entry announces: the server opens a live round from its
+// date and course and links them, then the admin is taken to the live-round
+// card, which is where the join code, check-in and closing all live.
+async function startCalendarRound(id) {
+  const ev = calEvents.find(e => e.id === id);
+  if (!ev) return;
+  const where = ev.course ? ' at ' + ev.course : '';
+  if (!confirm('Start ' + calTitle(ev) + where + ' now?\n\nIt opens as a live round on ' +
+      'everyone’s Home, and players can check in from their phones.')) return;
+  showMsgIn('calListMsg', 'Starting…', false);
+  try {
+    await adminSend('POST', '/admin/calendar/' + id + '/start');
+    showMsgIn('calListMsg', '', false);
+    afterCalendarChange();
+    // Land on the card that runs it, open.
+    document.getElementById('liveAdminCard').open = true;
+    location.hash = '#/admin';
+    showLiveAdminMsg(REQUIRE_CODE
+      ? 'Round started from the calendar — read the code out.'
+      : 'Round started from the calendar — it’s on everyone’s Home now.', false);
+  } catch (e) {
+    adminWriteFailed(e, 'calListMsg');
+    afterCalendarChange();  // e.g. someone else already started it
   }
 }
 

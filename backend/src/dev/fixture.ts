@@ -275,11 +275,16 @@ async function currentTags(): Promise<Map<number, number>> {
   return new Map(rows.map((r) => [r.playerId, r.tagNumber]));
 }
 
-// Upcoming calendar dates, in days from today. The -3 one is in the past and
-// must not show; the 0 one is today and gets the "Today" flag.
+// Calendar dates, in days from today. The -3 one is in the past and must not
+// show. Today's is the live round's own entry (LIVE_CALENDAR_INDEX) — the
+// fixture starts the round from it. Tomorrow's gets the "Tomorrow" flag, and
+// the work day is not a tags round, so it never offers Start.
+const LIVE_CALENDAR_INDEX = 1;
 const CALENDAR: { inDays: number; body: Record<string, unknown> }[] = [
   { inDays: -3, body: { course: "Marrow Hill", startTime: "10:00" } },
-  { inDays: 0, body: { course: "Quarry Bend", startTime: "17:30" } },
+  { inDays: 0, body: { course: LIVE_COURSE, startTime: "17:30" } },
+  { inDays: 1, body: { course: "Quarry Bend", startTime: "17:30" } },
+  { inDays: 4, body: { title: "Course work day", course: "Kestrel Flats", tagsRound: false, notes: "Clearing brush on 7–9. Gloves provided." } },
   { inDays: 6, body: { course: "Sable Woods", startTime: "10:00", notes: "Ace pool is $2 this week." } },
   { inDays: 13, body: { course: "Cedar Hollow" } },
   {
@@ -342,10 +347,20 @@ async function main() {
     }
   }
 
-  // The live round: open for check-in, dated today.
-  const live = await api("POST", "/api/admin/rounds", {
-    body: { date: isoDate(0), course: LIVE_COURSE },
-  });
+  // The calendar first, because the live round is started FROM it — the
+  // linked path, so the calendar shows that round as live with a Join button.
+  // Through the admin routes like everything else; courses reuse the invented
+  // names above so the typeahead has something to match against.
+  const calendarIds: number[] = [];
+  for (const ev of CALENDAR) {
+    const created = await api("POST", "/api/admin/calendar", {
+      body: { ...ev.body, date: isoDate(-ev.inDays) },
+    });
+    calendarIds.push(created.id);
+  }
+
+  // The live round: open for check-in, dated today, started from its entry.
+  const live = await api("POST", `/api/admin/calendar/${calendarIds[LIVE_CALENDAR_INDEX]}/start`);
   // Overwrite the randomly minted code with the fixed one. Done in SQL because
   // no route will ever let a caller choose a code — and it shouldn't.
   await db
@@ -385,12 +400,6 @@ async function main() {
     });
   }
 
-  // The calendar: a few dates ahead (and one behind, which the app must hide),
-  // through the admin routes like everything else. Courses reuse the invented
-  // names above so the typeahead has something to match against.
-  for (const ev of CALENDAR) {
-    await api("POST", "/api/admin/calendar", { body: { ...ev.body, date: isoDate(-ev.inDays) } });
-  }
   await api("PUT", "/api/admin/banner", {
     body: {
       message: "Kestrel Flats is closed this weekend for course work.",

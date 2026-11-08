@@ -1,7 +1,8 @@
 import { test, before, after, beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
 import { closeDb } from "../db/client.js";
-import { api, resetDb, startTestServer, stopTestServer } from "../test/helpers.js";
+import { api, openRound, resetDb, startTestServer, stopTestServer } from "../test/helpers.js";
+import { isoDaysFromToday } from "../lib/validate.js";
 
 // Integration tests for the league calendar and the site banner — both are
 // public to read and admin-only to write. These need a database; see `npm test`.
@@ -123,6 +124,126 @@ describe("calendar", () => {
     assert.equal(again.status, 404);
     const list = await api("GET", "/api/calendar?from=2026-01-01");
     assert.deepEqual(list.body, []);
+  });
+});
+
+describe("starting a round from the calendar", () => {
+  const today = () => isoDaysFromToday(0);
+  const start = (id: number) =>
+    api("POST", `/api/admin/calendar/${id}/start`, { admin: true });
+
+  test("opens a live round from the entry and links the two", async () => {
+    const { id } = await addEvent({ date: today(), course: "Valley", startTime: "10:00" });
+    const res = await start(id);
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(res.body.date, today());
+    assert.equal(res.body.course, "Valley");
+    assert.equal(res.body.status, "open");
+    assert.ok(res.body.joinCode, "the admin gets the code back to read out");
+
+    const cal = await api("GET", `/api/calendar?from=${today()}`);
+    assert.deepEqual(cal.body[0].round, { id: res.body.id, status: "open", joinable: true });
+    assert.equal(
+      JSON.stringify(cal.body).includes(res.body.joinCode),
+      false,
+      "the public calendar never carries the join code"
+    );
+
+    const live = await api("GET", "/api/rounds/live");
+    assert.deepEqual(live.body.map((r: any) => r.id), [res.body.id]);
+  });
+
+  test("an entry starts once, even when Start is pressed twice at once", async () => {
+    const { id } = await addEvent({ date: today() });
+    const [a, b] = await Promise.all([start(id), start(id)]);
+    assert.deepEqual([a.status, b.status].sort(), [201, 409]);
+    const again = await start(id);
+    assert.equal(again.status, 409);
+    assert.ok(again.body.roundId, "says which round it already is");
+    const all = await api("GET", "/api/rounds");
+    assert.equal(all.body.length, 1, "exactly one round was created");
+  });
+
+  test("two entries started at once can't both open a round", async () => {
+    const one = await addEvent({ date: today(), course: "A" });
+    const two = await addEvent({ date: today(), course: "B" });
+    const [a, b] = await Promise.all([start(one.id), start(two.id)]);
+    assert.deepEqual([a.status, b.status].sort(), [201, 409]);
+  });
+
+  test("refuses an entry that isn't a tags round", async () => {
+    const { id } = await addEvent({ date: today(), title: "Work day", tagsRound: false });
+    const res = await start(id);
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /isn't a tags round/);
+  });
+
+  test("refuses a date that isn't today", async () => {
+    const { id } = await addEvent({ date: isoDaysFromToday(5) });
+    const res = await start(id);
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /on the day/);
+  });
+
+  test("refuses while another round is in progress, and names it", async () => {
+    const other = await openRound({ date: today(), course: "Elsewhere" });
+    const { id } = await addEvent({ date: today() });
+    const res = await start(id);
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /Elsewhere/);
+    assert.equal(res.body.openRound.id, other.id);
+
+    await api("DELETE", `/api/admin/rounds/${other.id}`, { admin: true });
+    assert.equal((await start(id)).status, 201, "free to start once it's gone");
+  });
+
+  test("needs an admin", async () => {
+    const { id } = await addEvent({ date: today() });
+    const res = await api("POST", `/api/admin/calendar/${id}/start`);
+    assert.equal(res.status, 401);
+  });
+
+  test("once started, the round owns the date and course", async () => {
+    const { id } = await addEvent({ date: today(), course: "Valley" });
+    const round = (await start(id)).body;
+
+    for (const body of [{ date: isoDaysFromToday(1) }, { course: "Hill" }, { tagsRound: false }]) {
+      const res = await api("PATCH", `/api/admin/calendar/${id}`, { admin: true, body });
+      assert.equal(res.status, 409, `expected ${JSON.stringify(body)} to be refused`);
+    }
+    // The calendar's own fields are still its own.
+    const ok = await api("PATCH", `/api/admin/calendar/${id}`, {
+      admin: true,
+      body: { startTime: "11:00", notes: "Moved to 11" },
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.notes, "Moved to 11");
+
+    // A correction made on the round is carried back to the entry.
+    const fixed = await api("PATCH", `/api/admin/rounds/${round.id}`, {
+      admin: true,
+      body: { course: "Valley East" },
+    });
+    assert.equal(fixed.status, 200);
+    const cal = await api("GET", `/api/calendar?from=${today()}`);
+    assert.equal(cal.body[0].course, "Valley East");
+  });
+
+  test("deleting the round puts the entry back to not started", async () => {
+    const { id } = await addEvent({ date: today() });
+    const round = (await start(id)).body;
+    await api("DELETE", `/api/admin/rounds/${round.id}`, { admin: true });
+    const cal = await api("GET", `/api/calendar?from=${today()}`);
+    assert.equal(cal.body[0].round, null);
+    assert.equal((await start(id)).status, 201, "and it can be started again");
+  });
+
+  test("deleting the entry leaves the round alone", async () => {
+    const { id } = await addEvent({ date: today() });
+    const round = (await start(id)).body;
+    assert.equal((await api("DELETE", `/api/admin/calendar/${id}`, { admin: true })).status, 204);
+    const r = await api("GET", `/api/rounds/${round.id}`);
+    assert.equal(r.status, 200);
   });
 });
 
