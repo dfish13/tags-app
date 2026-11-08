@@ -5,6 +5,8 @@ import { tagsRouter, tagsAdminRouter } from "./routes/tags.js";
 import { roundsRouter, roundsAdminRouter } from "./routes/rounds.js";
 import { standingsRouter } from "./routes/standings.js";
 import { statsRouter } from "./routes/stats.js";
+import { calendarRouter, calendarAdminRouter } from "./routes/calendar.js";
+import { bannerRouter, bannerAdminRouter } from "./routes/banner.js";
 import { roundCodeRequired } from "./config.js";
 
 // Builds the Express app without binding a port, so tests can drive it in
@@ -77,6 +79,8 @@ export function createApp() {
   api.use("/rounds", roundsRouter);
   api.use("/standings", standingsRouter);
   api.use("/stats", statsRouter);
+  api.use("/calendar", calendarRouter);
+  api.use("/banner", bannerRouter);
 
   // Admin write routes — all under /api/admin/*, gated by requireAdmin.
   // Cloudflare Access protects /api/admin/* at the edge with its own email
@@ -96,6 +100,8 @@ export function createApp() {
   admin.use("/players", playersAdminRouter);
   admin.use("/tags", tagsAdminRouter);
   admin.use("/rounds", roundsAdminRouter);
+  admin.use("/calendar", calendarAdminRouter);
+  admin.use("/banner", bannerAdminRouter);
   api.use("/admin", admin);
 
   app.use("/api", api);
