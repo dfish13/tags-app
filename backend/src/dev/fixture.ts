@@ -10,6 +10,8 @@ import {
   roundEntries,
   rounds,
   tagAdjustments,
+  calendarEvents,
+  siteBanner,
   tagHolders,
   tags,
 } from "../db/schema.js";
@@ -273,6 +275,24 @@ async function currentTags(): Promise<Map<number, number>> {
   return new Map(rows.map((r) => [r.playerId, r.tagNumber]));
 }
 
+// Upcoming calendar dates, in days from today. The -3 one is in the past and
+// must not show; the 0 one is today and gets the "Today" flag.
+const CALENDAR: { inDays: number; body: Record<string, unknown> }[] = [
+  { inDays: -3, body: { course: "Marrow Hill", startTime: "10:00" } },
+  { inDays: 0, body: { course: "Quarry Bend", startTime: "17:30" } },
+  { inDays: 6, body: { course: "Sable Woods", startTime: "10:00", notes: "Ace pool is $2 this week." } },
+  { inDays: 13, body: { course: "Cedar Hollow" } },
+  {
+    inDays: 27,
+    body: {
+      title: "Fall doubles",
+      course: "Ironwood Park",
+      startTime: "09:00",
+      notes: "Random draw partners. Sign up: https://example.com/doubles",
+    },
+  },
+];
+
 async function main() {
   assertLocalDatabase();
 
@@ -285,7 +305,7 @@ async function main() {
   // Same wipe the test suite uses: RESTART IDENTITY so ids are identical on
   // every run, CASCADE for the FK web.
   await db.execute(
-    sql`truncate table ${admins}, ${players}, ${tags}, ${tagHolders}, ${tagAdjustments}, ${rounds}, ${roundEntries} restart identity cascade`
+    sql`truncate table ${admins}, ${players}, ${tags}, ${tagHolders}, ${tagAdjustments}, ${rounds}, ${roundEntries}, ${calendarEvents}, ${siteBanner} restart identity cascade`
   );
   await db
     .insert(tags)
@@ -364,6 +384,20 @@ async function main() {
       body: { score },
     });
   }
+
+  // The calendar: a few dates ahead (and one behind, which the app must hide),
+  // through the admin routes like everything else. Courses reuse the invented
+  // names above so the typeahead has something to match against.
+  for (const ev of CALENDAR) {
+    await api("POST", "/api/admin/calendar", { body: { ...ev.body, date: isoDate(-ev.inDays) } });
+  }
+  await api("PUT", "/api/admin/banner", {
+    body: {
+      message: "Kestrel Flats is closed this weekend for course work.",
+      linkUrl: "#/calendar",
+      linkLabel: "See the calendar",
+    },
+  });
 
   const waiting = LIVE_SIGNED_UP.length - LIVE_CHECKED_IN.length;
   console.log(

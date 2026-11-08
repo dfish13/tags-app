@@ -15,6 +15,8 @@ past rounds.
 - **New players mid-round** — an admin adding someone who isn't on the roster yet can create them and add them to the round in one step, after being shown every roster player who might already be them.
 - **Finalize** — computes tag assignments, snapshots them, and updates standings.
 - **Export/import** — run a round with no admin present, then hand it to an admin to review and finalize.
+- **Calendar** — public list of upcoming rounds (date, time, course, notes). Admins add and edit dates right on the page.
+- **Site banner** — one optional announcement above every page (course closed, tournament sign-up), with an optional link and show-from/until dates. Admin-set.
 - **Live rounds** — an admin opens a round; players at the course check themselves in and enter their own scores from their own phones. Optionally gated by a four-letter join code (`REQUIRE_ROUND_CODE`).
 
 ## Architecture
@@ -44,7 +46,7 @@ reaches only the entries of one round, and only while that round is open. The
 join code is an extra lock on that tier, not what defines it — see
 [Live rounds](#live-rounds).
 
-### Data model (6 tables)
+### Data model (8 tables)
 
 | Table | Purpose |
 |---|---|
@@ -55,6 +57,8 @@ join code is an extra lock on that tier, not what defines it — see
 | `rounds` | Each sanctioned round |
 | `round_entries` | One row per player per round (incoming tag, score, assigned tag) |
 | `admins` | Email allowlist for write access |
+| `calendar_events` | Planned rounds and other dates on the public calendar |
+| `site_banner` | The one site-wide announcement — a single row, or none |
 
 ### Standings are replayed, not written
 
@@ -279,6 +283,35 @@ The `409` carries a structured `heldBy` alongside the message, which is what
 lets the check-in flow offer "reissue it anyway" instead of dead-ending an admin
 at a first tee — the case this whole path exists for, since a new player is
 almost always issued a **recycled** number.
+
+## Calendar and site banner
+
+Both are **public to read and admin-only to write**, on the same tiers as
+everything else: `GET /api/calendar` and `GET /api/banner` are open, and the
+writes live under `/api/admin/calendar` and `/api/admin/banner`.
+
+**The calendar is not the rounds table.** A row in `rounds` is a live,
+writable thing with a tag pool and a join code; a date three weeks out is
+neither. A calendar entry is just the announcement — on the day, an admin
+opens a live round as usual, and the entry drops off the upcoming list once
+its date passes. Only the date is required; time, course, title (defaults to
+"Tags round") and notes are optional, and URLs in notes become links. Admins
+edit it **on the Calendar page itself** — the add form and per-row Edit links
+appear there while signed in — and Home shows the next date as a one-row card.
+
+**The banner is one message or none** (`site_banner` is pinned to a single
+row by a check constraint). It takes an optional link — an `https://` URL or
+an in-app path like `#/calendar`; anything else, `javascript:` included, is
+refused, because it lands in an href on every visitor's screen — and optional,
+inclusive show-from / show-until dates. Visitors can dismiss it; that sticks
+until an admin saves a new version.
+
+**Dates are judged by the browser, not the server.** The server runs on UTC,
+which rolls over at 5 or 6pm in the US — it would drop tonight's round from
+the calendar, or end "closed through Sunday" on Saturday evening. So the app
+asks for calendar dates from the *device's* today (`?from=YYYY-MM-DD`), and
+`GET /api/banner` returns the banner whatever its dates and lets the page
+decide whether today falls inside them.
 
 ## Courses
 

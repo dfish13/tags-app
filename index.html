@@ -292,7 +292,7 @@
      black ink, which on a dark theme is a bright hole in the page. `color` has
      to be stated as well — form controls do NOT inherit it, so leaving it off
      means black-on-dark no matter what --text says. */
-  input[type=text], input[type=number], input[type=date], input[type=search] {
+  input[type=text], input[type=number], input[type=date], input[type=time], input[type=search] {
     width: 100%;
     padding: 12px;
     font-size: 17px;
@@ -514,6 +514,57 @@
     margin: 3px 4px 0 0;
   }
   .empty { color: var(--muted); text-align: center; padding: 24px 0; font-size: 15px; }
+
+  /* ── Site banner ──
+     One admin-set announcement above every view. The accent fill, not a new
+     "alert" hue: it has to sit inside whatever palette the league runs, and
+     --accent-text is already derived to read on it. */
+  .site-banner {
+    display: flex; align-items: flex-start; gap: 6px;
+    background: var(--accent); color: var(--accent-text);
+    border-radius: 12px; padding: 10px 4px 10px 14px; margin-bottom: 14px;
+    font-size: 15px; font-weight: 600; line-height: 1.35;
+  }
+  .site-banner .sb-text { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-line; }
+  .site-banner a { color: inherit; font-weight: 800; white-space: nowrap; }
+  .site-banner .sb-x {
+    background: none; border: none; color: inherit; cursor: pointer;
+    font-size: 22px; line-height: 1; padding: 0 10px; opacity: .7;
+  }
+  .sb-state { font-size: 12px; font-weight: 700; color: var(--muted); margin-left: 6px; }
+
+  /* ── Calendar ── */
+  .cal-month {
+    font-size: 12px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+    color: var(--muted); padding: 14px 4px 2px;
+  }
+  .cal-month:first-child { padding-top: 0; }
+  .row.cal-row { align-items: flex-start; }
+  /* A date tile where the standings draw a tag bubble: same footprint, but
+     outlined rather than filled, because a date is not a tag. */
+  .cal-date {
+    width: 44px; flex-shrink: 0; text-align: center; line-height: 1.1;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--field);
+    padding: 3px 0 4px;
+  }
+  .cal-date .dow { display: block; font-size: 10px; font-weight: 800; letter-spacing: .4px; color: var(--muted); }
+  .cal-date .day { display: block; font-size: 18px; font-weight: 800; }
+  .cal-date.today { border-color: var(--primary-ink); border-width: 2px; padding: 2px 0 3px; }
+  .cal-body { flex: 1; min-width: 0; }
+  .cal-body .name { font-weight: 600; }
+  .cal-soon {
+    font-size: 10px; font-weight: 800; letter-spacing: .3px;
+    background: var(--accent); color: var(--accent-text);
+    border-radius: 4px; padding: 1px 5px; vertical-align: middle; margin-left: 4px;
+  }
+  .cal-notes { font-size: 13px; margin-top: 2px; white-space: pre-line; overflow-wrap: anywhere; }
+  .cal-notes a { color: var(--primary-ink); font-weight: 700; }
+  /* Free-text note fields read as prose, not as the import box's code. */
+  textarea.plain { font-family: inherit; font-size: 17px; min-height: 70px; }
+  /* Side by side where there's room, stacked on a phone: a native date field
+     needs ~160px before it starts clipping its own digits. */
+  .two-col { display: flex; flex-wrap: wrap; column-gap: 10px; }
+  .two-col > div { flex: 1 1 160px; min-width: 0; }
   .totals { display: flex; gap: 12px; margin-top: 4px; }
   .totals .box {
     flex: 1; background: var(--soft); border-radius: 10px; padding: 10px; text-align: center;
@@ -908,6 +959,7 @@
     <button class="drawer-item" id="nav-home" onclick="drawerGo('#/')">Home</button>
     <!-- Label is rewritten by renderDrawerRound() to name the round you're in. -->
     <button class="drawer-item" id="nav-round" onclick="drawerGo('#/round')">Start a round</button>
+    <button class="drawer-item" id="nav-calendar" onclick="drawerGo('#/calendar')">Calendar</button>
     <!-- Named for what the section actually is, not for the category it sits
          in. "Stats" read as a heading that ought to contain a player's page
          too; this section is the tag-history chart and nothing else, and a
@@ -920,6 +972,14 @@
   </div>
 </nav>
 <main>
+  <!-- Site banner: one admin-set announcement, above every view. Painted by
+       renderBanner(); hidden when there is none, outside its dates, or after
+       this visitor dismissed this version of it. -->
+  <div id="siteBanner" class="site-banner" role="region" aria-label="Announcement" style="display:none">
+    <div class="sb-text"><span id="sbMsg"></span><span id="sbLinkWrap"> <a id="sbLink"></a></span></div>
+    <button class="sb-x" aria-label="Dismiss announcement" onclick="dismissBanner()">&times;</button>
+  </div>
+
   <!-- Live-round status strip: only inside the round view, only in live mode -->
   <div id="liveBar" class="live-bar live-surface" style="display:none"></div>
 
@@ -929,6 +989,15 @@
     <div class="card" id="liveCard" style="display:none">
       <h2 id="liveCardTitle">Live round</h2>
       <div id="liveCardBody"></div>
+    </div>
+
+    <!-- The next date on the calendar. Hidden when nothing is scheduled. -->
+    <div class="card" id="nextCard" style="display:none">
+      <div class="card-head">
+        <h2>Next round</h2>
+        <button class="linkbtn" onclick="location.hash='#/calendar'">Calendar ›</button>
+      </div>
+      <div id="nextBody"></div>
     </div>
 
     <div class="card">
@@ -1181,6 +1250,39 @@
       <div id="adminRoundsList"><div class="empty">Loading…</div></div>
     </details>
 
+    <!-- Calendar: edited on its own page (the controls appear there while
+         signed in); this is the signpost so nobody hunts for it here. -->
+    <details class="card" id="calendarAdminCard" style="display:none">
+      <summary><span>Calendar (<span id="calCount">0</span> upcoming)</span></summary>
+      <p class="hint">Add, edit or remove dates on the Calendar page — while you’re
+        signed in, the edit controls appear right there beside each date.</p>
+      <button class="btn secondary" onclick="location.hash='#/calendar'">Open the calendar</button>
+    </details>
+
+    <!-- Site banner: the one announcement shown above every page. -->
+    <details class="card" id="bannerCard" style="display:none">
+      <summary><span>Site banner<span class="sb-state" id="bannerState"></span></span></summary>
+      <p class="hint">A short message shown at the top of every page — a course
+        closure, a tournament sign-up. One at a time; saving replaces it.</p>
+      <label for="bnMsg">Message</label>
+      <textarea id="bnMsg" class="plain" maxlength="280" placeholder="e.g. Valley is closed Nov 10–12 for aeration"></textarea>
+      <div class="two-col">
+        <div><label for="bnLink">Link (optional)</label>
+          <input type="text" id="bnLink" autocomplete="off" inputmode="url" placeholder="https://… or #/calendar"></div>
+        <div><label for="bnLabel">Link text</label>
+          <input type="text" id="bnLabel" autocomplete="off" maxlength="40" placeholder="More info"></div>
+      </div>
+      <div class="two-col">
+        <div><label for="bnStart">Show from</label><input type="date" id="bnStart"></div>
+        <div><label for="bnEnd">Show until</label><input type="date" id="bnEnd"></div>
+      </div>
+      <p class="hint">Dates are optional and include the day itself. Leave them
+        empty to show the banner until you remove it.</p>
+      <button class="btn" id="bnSaveBtn" onclick="saveBanner()">Save banner</button>
+      <button class="btn danger" id="bnRemoveBtn" style="display:none" onclick="removeBanner()">Remove banner</button>
+      <div id="bnMsgOut" class="hint" style="display:none"></div>
+    </details>
+
     <!-- Import a round exported by a non-admin, for review + finalizing -->
     <details class="card" id="importCard" style="display:none">
       <summary><span>Import a round for approval</span></summary>
@@ -1228,6 +1330,42 @@
       <div id="statsChartWrap" class="chart-wrap"></div>
       <button class="linkbtn" id="statsTableBtn" style="display:none" onclick="toggleStatsTable()">Show table</button>
       <div id="statsTable" class="stats-table-wrap" style="display:none"></div>
+    </div>
+  </section>
+
+  <!-- CALENDAR -->
+  <!-- Upcoming rounds. Public to read; a signed-in admin also gets the add
+       form and an Edit link per row, so the calendar is edited where it is
+       read rather than from a second copy of it under Admin. -->
+  <section id="view-calendar" style="display:none">
+    <div class="card">
+      <h2>Upcoming rounds</h2>
+      <!-- Static markup, like the open-a-round form: a half-typed entry
+           survives the list below being re-rendered. -->
+      <details class="sub" id="calAdd" style="display:none">
+        <summary>Add a date</summary>
+        <div class="two-col">
+          <div><label for="calDate">Date</label><input type="date" id="calDate"></div>
+          <div><label for="calTime">Start time</label><input type="time" id="calTime"></div>
+        </div>
+        <label for="calCourse">Course</label>
+        <div class="typeahead">
+          <input type="text" id="calCourse" autocomplete="off" placeholder="Course name" maxlength="100"
+            role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="calCourseSugs"
+            oninput="onCourseInput('calCourse')" onfocus="onCourseInput('calCourse')"
+            onkeydown="onCourseKey(event,'calCourse')" onblur="onCourseBlur('calCourse')">
+          <div id="calCourseSugs" class="suggestions" role="listbox" style="display:none"></div>
+        </div>
+        <div id="calCourseHint" class="hint" style="display:none"></div>
+        <label for="calTitle">Title</label>
+        <input type="text" id="calTitle" autocomplete="off" placeholder="Tags round" maxlength="80">
+        <label for="calNotes">Notes</label>
+        <textarea id="calNotes" class="plain" maxlength="500" placeholder="Optional — e.g. meet at hole 1, $2 ace pool"></textarea>
+        <p class="hint">Only the date is required. Leave the time empty if it isn’t set yet.</p>
+        <button class="btn" id="calAddBtn" onclick="addCalendarEvent()">Add to calendar</button>
+        <div id="calMsg" class="hint" style="display:none"></div>
+      </details>
+      <div id="calendarList"><div class="empty">Loading…</div></div>
     </div>
   </section>
 
@@ -1452,7 +1590,7 @@ let pendingJoinCode = null;
 let autoJoinTried = false;
 
 const STEPS = ['setup', 'scores'];
-const ALL_SECTIONS = ['home','choose','setup','scores','admin','stats','player'];
+const ALL_SECTIONS = ['home','choose','setup','scores','admin','stats','player','calendar'];
 let playerPageId = null;  // the player whose page is open, when route === 'player'
 
 function showSection(id) {
@@ -1480,6 +1618,7 @@ function router() {
   }
   else if (h.startsWith('#/admin')) route = 'admin';
   else if (h.startsWith('#/stats')) route = 'stats';
+  else if (h.startsWith('#/calendar')) route = 'calendar';
   else if (h.startsWith('#/player/')) {
     // A hash that can't name a player is not a player page — fall home rather
     // than paint a card that will only ever say "not found".
@@ -1502,13 +1641,14 @@ function router() {
   document.getElementById('nav-home').classList.toggle('active', route==='home');
   document.getElementById('nav-round').classList.toggle('active', route==='round' || route==='join');
   document.getElementById('nav-stats').classList.toggle('active', route==='stats');
+  document.getElementById('nav-calendar').classList.toggle('active', route==='calendar');
   document.getElementById('nav-admin').classList.toggle('active', route==='admin');
 
   // Short on purpose: this is a label saying where you are, not a description.
   // The room it leaves on the line is what the live note beside it uses.
   // 'player' starts generic and is rewritten with the name once it loads —
   // the id in the hash isn't something to show anyone.
-  const subs = { home:'Home', round:roundLabel(), join:'Join a round', admin:'Admin', stats:'Tag history', player:'Player' };
+  const subs = { home:'Home', round:roundLabel(), join:'Join a round', admin:'Admin', stats:'Tag history', player:'Player', calendar:'Calendar' };
   document.getElementById('phaseSub').textContent = subs[route];
   applyLiveChrome();  // after the line above: it rewrites the element's content
 
@@ -1518,6 +1658,10 @@ function router() {
     loadLiveRounds();
     loadStandings();
     loadHistory();
+    loadNextRound();
+  } else if (route === 'calendar') {
+    showSection('calendar');
+    loadCalendarPage();
   } else if (route === 'stats') {
     showSection('stats');
     loadStatsPage();
@@ -2749,7 +2893,7 @@ async function refreshAdminAuth() {
   // Everything on this page except the sign-in card is admin-only, so they all
   // move together. Listed rather than folded into one container because their
   // order on the page is deliberate and a wrapper would fight the card spacing.
-  const signedIn = ['liveAdminCard', 'rosterCard', 'roundsCard', 'importCard', 'sessionCard'];
+  const signedIn = ['liveAdminCard', 'rosterCard', 'roundsCard', 'calendarAdminCard', 'bannerCard', 'importCard', 'sessionCard'];
   document.getElementById('authCard').style.display = adminEmail ? 'none' : '';
   for (const id of signedIn) {
     document.getElementById(id).style.display = adminEmail ? '' : 'none';
@@ -2758,6 +2902,10 @@ async function refreshAdminAuth() {
     document.getElementById('adminWho').textContent = adminEmail;
     loadLiveAdmin();
     loadAdminRounds();
+    loadBannerAdmin();
+    fetchCalendar().then(() => {
+      document.getElementById('calCount').textContent = calEvents.length;
+    }).catch(() => {});
   }
 }
 
@@ -5690,6 +5838,419 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// ─── Admin writes (generic) ───────────────────────────────
+// Same contract as postAdmin/patchAdmin: 401/403 surface as 'Failed to fetch'
+// so callers route to sign-in, any other failure carries the API's message.
+async function adminSend(method, path, body) {
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  if (res.status === 401 || res.status === 403) throw new Error('Failed to fetch');
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error(b.error || ('HTTP ' + res.status));
+  }
+  return res;
+}
+
+function showMsgIn(id, text, isError) {
+  const msg = document.getElementById(id);
+  if (!msg) return;
+  msg.textContent = text;
+  msg.style.display = text ? '' : 'none';
+  msg.style.color = isError ? 'var(--danger)' : 'var(--green)';
+}
+
+// A rejected admin write: a lapsed Access session goes to sign-in, anything
+// else is shown where the admin is looking.
+function adminWriteFailed(e, msgId) {
+  if (String(e.message).includes('Failed to fetch')) {
+    showMsgIn(msgId, 'Sign-in required — redirecting…', true);
+    setTimeout(adminSignIn, 800);
+  } else {
+    showMsgIn(msgId, e.message, true);
+  }
+}
+
+// ─── Calendar ─────────────────────────────────────────────
+// Planned rounds, soonest first. Separate from `rounds` on the server — a
+// calendar entry is an announcement, not a round; on the day an admin opens a
+// live round as usual. Past dates drop off by themselves: the list is asked
+// for from the DEVICE's today, so tonight's round stays up until midnight here
+// rather than until midnight UTC.
+
+let calEvents = [];
+let calLoaded = false;
+let calEditId = null;   // id of the event whose edit panel is open
+
+async function fetchCalendar() {
+  const res = await fetch(API_BASE + '/calendar?from=' + localToday());
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  calEvents = await res.json();
+  calLoaded = true;
+  return calEvents;
+}
+
+async function loadCalendarPage() {
+  renderCalendar();  // whatever we already have, then refresh
+  if (!courses.length) loadCourses();  // for the course typeahead
+  // Edit controls depend on who we are; a player just gets the list.
+  if (!adminChecked) ensureAdminChecked().then(renderCalendar);
+  try {
+    await fetchCalendar();
+    renderCalendar();
+  } catch (e) {
+    if (!calLoaded) {
+      document.getElementById('calendarList').innerHTML =
+        '<div class="empty">Could not load the calendar (' + esc(e.message) + ').</div>';
+    }
+  }
+}
+
+// Home's "Next round" card: the first upcoming event, or nothing.
+async function loadNextRound() {
+  try { await fetchCalendar(); } catch (e) { /* keep whatever was painted */ }
+  renderNextRound();
+}
+
+function renderNextRound() {
+  const card = document.getElementById('nextCard');
+  if (!card) return;
+  const next = calEvents[0];
+  card.style.display = next ? '' : 'none';
+  if (next) document.getElementById('nextBody').innerHTML = calRow(next, false);
+}
+
+// '14:30' → '2:30 PM'.
+function fmtClock(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM');
+}
+
+// Day-of-week for a 'YYYY-MM-DD', built from local parts so no TZ shift.
+function dowOf(d) {
+  const [y, m, day] = d.split('-').map(Number);
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(y, m - 1, day).getDay()];
+}
+
+function addDaysIso(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const t = new Date(y, m - 1, d + n);
+  return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') +
+    '-' + String(t.getDate()).padStart(2, '0');
+}
+
+// Escape, then turn bare http(s) URLs into links — notes are where a sign-up
+// form or a course map naturally goes. Escaping first means nothing typed can
+// become markup; the URL pattern stops at whitespace and at '&quot;'/'<'.
+function linkify(text) {
+  return esc(text).replace(/https?:\/\/[^\s<]+?(?=[.,;:!?)]*(?:\s|$|&quot;|&#39;|<))/g,
+    url => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+}
+
+function calRow(ev, editable) {
+  const today = localToday();
+  const soon = ev.date === today ? 'Today'
+    : ev.date === addDaysIso(today, 1) ? 'Tomorrow' : '';
+  const meta = [fmtClock(ev.startTime), ev.course].filter(Boolean).join(' · ');
+  return `
+    <div class="row cal-row">
+      <div class="cal-date${ev.date === today ? ' today' : ''}" aria-label="${esc(fmtDate(ev.date))}">
+        <span class="dow">${dowOf(ev.date).toUpperCase()}</span>
+        <span class="day">${+ev.date.slice(8, 10)}</span>
+      </div>
+      <div class="cal-body">
+        <div class="name">${esc(ev.title || 'Tags round')}${soon ? ` <span class="cal-soon">${soon}</span>` : ''}</div>
+        <div class="meta">${esc(meta || fmtDate(ev.date))}</div>
+        ${ev.notes ? `<div class="cal-notes">${linkify(ev.notes)}</div>` : ''}
+      </div>
+      ${editable ? `<button class="linkbtn" onclick="openCalEdit(${ev.id})">Edit</button>` : ''}
+    </div>`;
+}
+
+function calEditRow(ev) {
+  const id = ev.id;
+  const c = 'cal-course-' + id;
+  return `
+    <div class="row-edit">
+      <div class="two-col">
+        <div><label for="cal-date-${id}">Date</label>
+          <input type="date" id="cal-date-${id}" value="${esc(ev.date)}"></div>
+        <div><label for="cal-time-${id}">Start time</label>
+          <input type="time" id="cal-time-${id}" value="${esc(ev.startTime || '')}"></div>
+      </div>
+      <label for="${c}">Course</label>
+      <div class="typeahead">
+        <input type="text" id="${c}" autocomplete="off" maxlength="100" value="${esc(ev.course || '')}"
+          placeholder="Course name" role="combobox" aria-expanded="false" aria-autocomplete="list"
+          aria-controls="${c}Sugs" oninput="onCourseInput('${c}')" onfocus="onCourseInput('${c}')"
+          onkeydown="onCourseKey(event,'${c}')" onblur="onCourseBlur('${c}')">
+        <div id="${c}Sugs" class="suggestions" role="listbox" style="display:none"></div>
+      </div>
+      <div id="${c}Hint" class="hint" style="display:none"></div>
+      <label for="cal-title-${id}">Title</label>
+      <input type="text" id="cal-title-${id}" autocomplete="off" maxlength="80"
+        value="${esc(ev.title || '')}" placeholder="Tags round">
+      <label for="cal-notes-${id}">Notes</label>
+      <textarea id="cal-notes-${id}" class="plain" maxlength="500">${esc(ev.notes || '')}</textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn" style="margin:0" onclick="saveCalEdit(${id})">Save</button>
+        <button class="btn secondary" style="margin:0" onclick="cancelCalEdit()">Cancel</button>
+      </div>
+      <button class="btn danger" onclick="deleteCalEvent(${id})">Delete date</button>
+      <div id="cal-msg-${id}" class="hint" style="display:none"></div>
+    </div>`;
+}
+
+function renderCalendar() {
+  const el = document.getElementById('calendarList');
+  const isAdmin = !!adminEmail;
+  document.getElementById('calAdd').style.display = isAdmin ? '' : 'none';
+  if (!calLoaded) return;
+  if (!calEvents.length) {
+    el.innerHTML = '<div class="empty">Nothing scheduled yet.' +
+      (isAdmin ? '' : ' Check back soon.') + '</div>';
+    return;
+  }
+  let html = '', month = '';
+  for (const ev of calEvents) {
+    const m = ev.date.slice(0, 7);
+    if (m !== month) { month = m; html += `<div class="cal-month">${esc(fmtMonth(m))}</div>`; }
+    html += (isAdmin && calEditId === ev.id) ? calEditRow(ev) : calRow(ev, isAdmin);
+  }
+  el.innerHTML = html;
+}
+
+// The five fields, from either the add form or an edit panel.
+function readCalFields(ids) {
+  const v = id => document.getElementById(id).value.trim();
+  return {
+    date: v(ids.date),
+    startTime: v(ids.time) || null,
+    course: v(ids.course) || null,
+    title: v(ids.title) || null,
+    notes: v(ids.notes) || null,
+  };
+}
+
+async function addCalendarEvent() {
+  const btn = document.getElementById('calAddBtn');
+  const body = readCalFields({ date: 'calDate', time: 'calTime', course: 'calCourse', title: 'calTitle', notes: 'calNotes' });
+  if (!body.date) { showMsgIn('calMsg', 'Pick a date.', true); return; }
+  if (body.date < localToday() && !confirm('That date has already passed, so it won’t show on the calendar. Add it anyway?')) return;
+  btn.disabled = true;
+  try {
+    await adminSend('POST', '/admin/calendar', body);
+    for (const id of ['calDate', 'calTime', 'calCourse', 'calTitle', 'calNotes']) {
+      document.getElementById(id).value = '';
+    }
+    hideCourseSugs('calCourse');
+    showCourseHint('calCourse');
+    showMsgIn('calMsg', 'Added ' + fmtDate(body.date) + '.', false);
+    await afterCalendarChange();
+  } catch (e) {
+    adminWriteFailed(e, 'calMsg');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openCalEdit(id) { calEditId = id; renderCalendar(); }
+function cancelCalEdit() { calEditId = null; renderCalendar(); }
+
+async function saveCalEdit(id) {
+  const ev = calEvents.find(e => e.id === id);
+  if (!ev) return;
+  const next = readCalFields({
+    date: 'cal-date-' + id, time: 'cal-time-' + id, course: 'cal-course-' + id,
+    title: 'cal-title-' + id, notes: 'cal-notes-' + id
+  });
+  if (!next.date) { showMsgIn('cal-msg-' + id, 'A date is required.', true); return; }
+  // Only what changed — null is meaningful (it clears the field).
+  const patch = {};
+  for (const k of Object.keys(next)) {
+    if ((next[k] || null) !== (ev[k] || null)) patch[k] = next[k];
+  }
+  if (!Object.keys(patch).length) { cancelCalEdit(); return; }
+  try {
+    await adminSend('PATCH', '/admin/calendar/' + id, patch);
+    calEditId = null;
+    await afterCalendarChange();
+  } catch (e) {
+    adminWriteFailed(e, 'cal-msg-' + id);
+  }
+}
+
+async function deleteCalEvent(id) {
+  const ev = calEvents.find(e => e.id === id);
+  if (!ev) return;
+  const label = (ev.title || 'Tags round') + ' on ' + fmtDate(ev.date) + (ev.course ? ' at ' + ev.course : '');
+  if (!confirm('Remove ' + label + ' from the calendar?')) return;
+  try {
+    await adminSend('DELETE', '/admin/calendar/' + id);
+    calEditId = null;
+    await afterCalendarChange();
+  } catch (e) {
+    adminWriteFailed(e, 'cal-msg-' + id);
+  }
+}
+
+async function afterCalendarChange() {
+  try { await fetchCalendar(); } catch (e) { /* keep the last list */ }
+  renderCalendar();
+  renderNextRound();
+  const n = document.getElementById('calCount');
+  if (n) n.textContent = calEvents.length;
+}
+
+// ─── Site banner ──────────────────────────────────────────
+// One announcement or none. The server hands it back whatever its dates and
+// THIS device decides whether today is inside them — its own local date, for
+// the same reason the calendar asks from it. A visitor can dismiss it; that
+// sticks until an admin saves a new version (keyed on updatedAt), so an edited
+// message is seen again rather than staying hidden behind an old dismissal.
+
+const BANNER_DISMISS_KEY = 'tags-banner-dismissed-v1';
+let siteBannerData = null;
+
+async function loadBanner() {
+  try {
+    const res = await fetch(API_BASE + '/banner');
+    if (!res.ok) return;
+    siteBannerData = await res.json();
+  } catch (e) { return; /* offline with nothing cached — no banner */ }
+  renderBanner();
+}
+
+function bannerState(b) {
+  if (!b) return 'off';
+  const today = localToday();
+  if (b.startsOn && today < b.startsOn) return 'scheduled';
+  if (b.endsOn && today > b.endsOn) return 'expired';
+  return 'showing';
+}
+
+// Belt and braces: the server already refuses anything else, but this lands
+// in an href on every visitor's screen.
+function safeBannerHref(u) {
+  if (!u) return null;
+  if (u.startsWith('#/') || (u.startsWith('/') && !u.startsWith('//'))) return u;
+  return /^https?:\/\//i.test(u) ? u : null;
+}
+
+function renderBanner() {
+  const el = document.getElementById('siteBanner');
+  const b = siteBannerData;
+  let dismissed = null;
+  try { dismissed = localStorage.getItem(BANNER_DISMISS_KEY); } catch (e) { /* private mode */ }
+  if (bannerState(b) !== 'showing' || (b && dismissed === b.updatedAt)) {
+    el.style.display = 'none';
+    return;
+  }
+  document.getElementById('sbMsg').textContent = b.message;
+  const href = safeBannerHref(b.linkUrl);
+  const link = document.getElementById('sbLink');
+  document.getElementById('sbLinkWrap').style.display = href ? '' : 'none';
+  if (href) {
+    link.textContent = b.linkLabel || 'More info';
+    link.setAttribute('href', href);
+    const external = /^https?:/i.test(href);
+    if (external) { link.target = '_blank'; link.rel = 'noopener'; }
+    else { link.removeAttribute('target'); link.removeAttribute('rel'); }
+  }
+  el.style.display = '';
+}
+
+function dismissBanner() {
+  if (siteBannerData) {
+    try { localStorage.setItem(BANNER_DISMISS_KEY, siteBannerData.updatedAt); } catch (e) { /* session-only */ }
+  }
+  document.getElementById('siteBanner').style.display = 'none';
+}
+
+// Admin editor: fill the form from whatever is set.
+async function loadBannerAdmin() {
+  await loadBanner();
+  fillBannerForm();
+}
+
+function fillBannerForm() {
+  const b = siteBannerData;
+  document.getElementById('bnMsg').value = b ? b.message : '';
+  document.getElementById('bnLink').value = b ? (b.linkUrl || '') : '';
+  document.getElementById('bnLabel').value = b ? (b.linkLabel || '') : '';
+  document.getElementById('bnStart').value = b ? (b.startsOn || '') : '';
+  document.getElementById('bnEnd').value = b ? (b.endsOn || '') : '';
+  renderBannerState();
+}
+
+function renderBannerState() {
+  const s = bannerState(siteBannerData);
+  const b = siteBannerData;
+  const words = {
+    off: '· off',
+    showing: '· showing' + (b && b.endsOn ? ' until ' + fmtDateShort(b.endsOn) : ''),
+    scheduled: '· from ' + (b ? fmtDateShort(b.startsOn) : ''),
+    expired: '· ended ' + (b ? fmtDateShort(b.endsOn) : ''),
+  };
+  document.getElementById('bannerState').textContent = ' ' + words[s];
+  document.getElementById('bnRemoveBtn').style.display = b ? '' : 'none';
+}
+
+async function saveBanner() {
+  const v = id => document.getElementById(id).value.trim();
+  const body = {
+    message: v('bnMsg'),
+    linkUrl: v('bnLink') || null,
+    linkLabel: v('bnLabel') || null,
+    startsOn: v('bnStart') || null,
+    endsOn: v('bnEnd') || null,
+  };
+  if (!body.message) { showMsgIn('bnMsgOut', 'Write a message first.', true); return; }
+  if (body.linkUrl && !safeBannerHref(body.linkUrl)) {
+    showMsgIn('bnMsgOut', 'The link must start with https:// (or be an app path like #/calendar).', true);
+    return;
+  }
+  if (body.startsOn && body.endsOn && body.endsOn < body.startsOn) {
+    showMsgIn('bnMsgOut', '“Show until” is before “Show from”.', true);
+    return;
+  }
+  const btn = document.getElementById('bnSaveBtn');
+  btn.disabled = true;
+  try {
+    const res = await adminSend('PUT', '/admin/banner', body);
+    siteBannerData = await res.json();
+    fillBannerForm();
+    renderBanner();
+    const s = bannerState(siteBannerData);
+    showMsgIn('bnMsgOut',
+      s === 'showing' ? 'Saved — it’s showing at the top of every page now.'
+      : s === 'scheduled' ? 'Saved — it will start showing on ' + fmtDate(siteBannerData.startsOn) + '.'
+      : 'Saved, but its end date has passed, so nobody will see it.', s === 'expired');
+  } catch (e) {
+    adminWriteFailed(e, 'bnMsgOut');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function removeBanner() {
+  if (!confirm('Remove the site banner? It disappears for everyone.')) return;
+  try {
+    await adminSend('DELETE', '/admin/banner');
+    siteBannerData = null;
+    fillBannerForm();
+    renderBanner();
+    showMsgIn('bnMsgOut', 'Banner removed.', false);
+  } catch (e) {
+    adminWriteFailed(e, 'bnMsgOut');
+  }
+}
+
 // Enter key on tag field adds player
 document.getElementById('pTag').addEventListener('keydown', e => { if (e.key === 'Enter') addPlayer(); });
 // Enter key on admin name/tag fields adds roster player
@@ -5837,6 +6398,7 @@ function refreshHomeLive() {
 }
 
 loadConfig();
+loadBanner();
 
 // Stored mid-round but already finalized: the phone was shut before the poll
 // that would have carried it out of the round, or it was last open under a

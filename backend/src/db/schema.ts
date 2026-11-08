@@ -7,7 +7,9 @@ import {
   timestamp,
   date,
   unique,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // League roster. Players persist across rounds.
 export const players = pgTable("players", {
@@ -156,3 +158,54 @@ export const admins = pgTable("admins", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
 });
+
+// The league calendar: rounds that are PLANNED, as opposed to rounds that
+// exist. Deliberately not rows in `rounds` — a round there is a live,
+// writable thing with a tag pool and a join code, and a date three weeks out
+// is neither. When the day comes an admin opens a live round as usual; the
+// calendar entry is just the announcement, and it simply drops off the
+// upcoming list once its date passes.
+export const calendarEvents = pgTable("calendar_events", {
+  id: serial("id").primaryKey(),
+  date: date("date").notNull(),
+  // "HH:MM", 24-hour, in the league's own local time. Text rather than a
+  // time/timestamptz column because it is wall-clock time at the course —
+  // there is no instant to convert, and nobody wants 10:00 shifted by a
+  // server's TZ. Null = time not announced yet.
+  startTime: text("start_time"),
+  // Null renders as the default ("Tags round"); set for anything else —
+  // doubles, a tournament, a work day.
+  title: text("title"),
+  // Free text, like rounds.course — see "Courses" in the README.
+  course: text("course"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// The one site-wide announcement banner, or no row at all. A single row
+// (id pinned to 1 by the check constraint) because the site shows one message
+// at a time — two banners stacked above the standings is a page about banners.
+//
+// startsOn / endsOn are optional and inclusive. Visibility is decided by the
+// BROWSER against its own local date, not here: the server runs on UTC and
+// would end "closed through Sunday" at 6pm Saturday in Colorado.
+export const siteBanner = pgTable(
+  "site_banner",
+  {
+    id: integer("id").primaryKey().default(1),
+    message: text("message").notNull(),
+    // http(s) URL, or an in-app path like "#/calendar". Validated on write —
+    // this lands in an href, so javascript: must never get through.
+    linkUrl: text("link_url"),
+    linkLabel: text("link_label"),
+    startsOn: date("starts_on"),
+    endsOn: date("ends_on"),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    // Audit only, and NEVER served — it is an email address.
+    updatedBy: text("updated_by"),
+  },
+  (t) => ({
+    singleton: check("site_banner_singleton", sql`${t.id} = 1`),
+  })
+);
