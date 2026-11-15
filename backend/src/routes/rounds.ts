@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { eq, and, inArray, desc, asc, sql, ne, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "../db/client.js";
-import { rounds, roundEntries, tags, players } from "../db/schema.js";
+import { rounds, roundEntries, tags, players, calendarEvents } from "../db/schema.js";
 import {
   requireRoundCode,
   codeFailureLimiter,
@@ -661,6 +661,25 @@ function codeHours(input: unknown): number {
   return Math.min(n, 24 * 7); // cap: a code shouldn't outlive the season
 }
 
+// Insert a round that is open to players, with a fresh join code. Shared by
+// the Admin card's "Open round" below and by starting a round from a calendar
+// entry (routes/calendar.ts), so both mint codes and expiries the same way.
+// The code is allocated against `db` before the insert, like the route below
+// has always done; a clash with a concurrent mint still fails on the unique
+// index rather than handing two rounds one code.
+export async function insertLiveRound(
+  tx: DbOrTx,
+  fields: { date: string; course: string | null; createdBy: string | null },
+  expiresInHours: number = DEFAULT_CODE_HOURS
+) {
+  const code = await mintCode(expiresInHours);
+  const [created] = await tx
+    .insert(rounds)
+    .values({ ...fields, ...code })
+    .returning();
+  return created;
+}
+
 // Create a round. Opens it for check-in with a join code by default — that's
 // the live-round flow. Pass withCode: false for a round an admin will fill in
 // themselves.
@@ -776,6 +795,19 @@ roundsAdminRouter.patch("/:id", async (req, res) => {
     // move standings — a round moved from March to today now beats everything
     // in between. Course is inert.
     if (patch.date !== undefined) await replayTagHolders(tx);
+    // A round started from the calendar owns its entry's date and course (the
+    // calendar refuses to edit them), so a correction here is carried across
+    // rather than leaving the calendar saying something the round doesn't.
+    if (patch.date !== undefined || patch.course !== undefined) {
+      await tx
+        .update(calendarEvents)
+        .set({
+          ...(patch.date !== undefined ? { date: row.date } : {}),
+          ...(patch.course !== undefined ? { course: row.course } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(calendarEvents.roundId, id));
+    }
     return { row, droppedPending };
   });
   if (!result) return res.status(404).json({ error: "Round not found" });

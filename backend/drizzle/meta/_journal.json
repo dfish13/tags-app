@@ -36,6 +36,13 @@
       "when": 1789668907038,
       "tag": "0004_short_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794157951253,
+      "tag": "0005_certain_quasimodo",
+      "breakpoints": true
     }
   ]
 }

@@ -15,6 +15,8 @@ past rounds.
 - **New players mid-round** — an admin adding someone who isn't on the roster yet can create them and add them to the round in one step, after being shown every roster player who might already be them.
 - **Finalize** — computes tag assignments, snapshots them, and updates standings.
 - **Export/import** — run a round with no admin present, then hand it to an admin to review and finalize.
+- **Calendar** — public list of upcoming rounds (date, time, course, notes). Admins add and edit dates right on the page, and **start the day's round from its entry**; once it's live, everyone gets a Join button there.
+- **Site banner** — one optional announcement above every page (course closed, tournament sign-up), with an optional link and show-from/until dates. Admin-set.
 - **Live rounds** — an admin opens a round; players at the course check themselves in and enter their own scores from their own phones. Optionally gated by a four-letter join code (`REQUIRE_ROUND_CODE`).
 
 ## Architecture
@@ -44,7 +46,7 @@ reaches only the entries of one round, and only while that round is open. The
 join code is an extra lock on that tier, not what defines it — see
 [Live rounds](#live-rounds).
 
-### Data model (6 tables)
+### Data model (8 tables)
 
 | Table | Purpose |
 |---|---|
@@ -55,6 +57,8 @@ join code is an extra lock on that tier, not what defines it — see
 | `rounds` | Each sanctioned round |
 | `round_entries` | One row per player per round (incoming tag, score, assigned tag) |
 | `admins` | Email allowlist for write access |
+| `calendar_events` | Planned rounds and other dates on the public calendar |
+| `site_banner` | The one site-wide announcement — a single row, or none |
 
 ### Standings are replayed, not written
 
@@ -279,6 +283,74 @@ The `409` carries a structured `heldBy` alongside the message, which is what
 lets the check-in flow offer "reissue it anyway" instead of dead-ending an admin
 at a first tee — the case this whole path exists for, since a new player is
 almost always issued a **recycled** number.
+
+## Calendar and site banner
+
+Both are **public to read and admin-only to write**, on the same tiers as
+everything else: `GET /api/calendar` and `GET /api/banner` are open, and the
+writes live under `/api/admin/calendar` and `/api/admin/banner`.
+
+**The calendar is not the rounds table.** A row in `rounds` is a live,
+writable thing with a tag pool and a join code; a date three weeks out is
+neither. A calendar entry is the announcement, and it drops off the upcoming
+list once its date passes. Only the date is required; time, course, title and
+notes are optional, URLs in notes become links, and a **Tags round** flag
+(on by default) marks whether the entry moves tags at all — a work day or a
+tournament with its own format doesn't. Admins edit it **on the Calendar page
+itself** — the add form and per-row Edit links appear there while signed in —
+and Home shows the next unstarted tags round as a one-row card.
+
+### Starting a round from the calendar
+
+On the day, a signed-in admin gets a **Start** button on the entry.
+`POST /api/admin/calendar/:id/start` opens a live round from the entry's date
+and course — the same as Admin's *Open round* — links the two through
+`calendar_events.round_id`, and the app goes to Admin's live-round card, which
+is where the join code, check-in and closing still live. From then on the
+entry shows the round's state to everyone: **live** with a Join button, *in
+progress* once it's closed to players, *finished* after finalizing.
+
+The link is on the calendar's side on purpose: `rounds`, which standings are
+replayed from, doesn't change shape, and a round with no entry — opened from
+Admin, run on one phone, imported — stays the ordinary case.
+
+Start is refused when:
+
+- **it's already started** — one round per entry (a unique constraint), so a
+  double tap opens one round, not two;
+- **it isn't a tags round** — finalizing one would move tags;
+- **it isn't the day.** The app only offers Start on the entry's own date by
+  the phone's clock; the server, which doesn't know the league's timezone,
+  refuses anything more than a day from its UTC date. It matters because a
+  join code expires **12 hours after it's minted**, not after the round's start
+  time — a round opened the night before would lock players out mid-round.
+  Starting early on the day itself has the same edge: start at 7am for a 7pm
+  round and the code runs out at 7pm. *Open again* on the live card mints a
+  fresh one;
+- **another round is still in progress** — the message names it. Admin's live
+  card and every phone handle one round at a time.
+
+**Once started, the round owns the date and course.** The date is where the
+round sits in the tag history, so editing it on the calendar could silently
+move standings: the calendar refuses (`409`) and the edit panel shows both
+fields locked. Correct them under Admin → Rounds instead, and the change is
+copied back to the entry. Time, title and notes stay the calendar's own.
+Deleting the round clears the link — the entry goes back to *not started* and
+can be started again; deleting the entry leaves the round alone.
+
+**The banner is one message or none** (`site_banner` is pinned to a single
+row by a check constraint). It takes an optional link — an `https://` URL or
+an in-app path like `#/calendar`; anything else, `javascript:` included, is
+refused, because it lands in an href on every visitor's screen — and optional,
+inclusive show-from / show-until dates. Visitors can dismiss it; that sticks
+until an admin saves a new version.
+
+**Dates are judged by the browser, not the server.** The server runs on UTC,
+which rolls over at 5 or 6pm in the US — it would drop tonight's round from
+the calendar, or end "closed through Sunday" on Saturday evening. So the app
+asks for calendar dates from the *device's* today (`?from=YYYY-MM-DD`), and
+`GET /api/banner` returns the banner whatever its dates and lets the page
+decide whether today falls inside them.
 
 ## Courses
 
