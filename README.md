@@ -430,9 +430,8 @@ docker compose up -d --build
 
 This starts PostgreSQL and the API. On boot the API runs migrations, seeds the
 tag pool (1–300) and admin allowlist, then serves on port 3001. The frontend is
-a single static file — serve it with `python3 -m http.server 8080` — but note
-that the page calls same-origin `/api`, so on their own ports the two halves
-don't talk. Use the test stack above for that.
+a single static file, but the page calls same-origin `/api`, so on their own
+ports the two halves don't talk. Use the test stack above for that.
 
 ### Backend development (without Docker)
 
@@ -503,7 +502,14 @@ To stand up a new league (e.g. "Mile Hi Tags"):
    docker compose up -d --build
    ```
    On boot the API migrates, seeds the tag pool (1–300) and admins, and serves
-   on port 3001. Serve `index.html` alongside it (same origin as the API).
+   on port 3001. Serve the frontend alongside it (same origin as the API), from
+   a folder of its own rather than the checkout:
+   ```bash
+   scripts/link-public.sh ~/tags-app-public
+   cd ~/tags-app-public && python3 -m http.server 8080 --bind 127.0.0.1
+   ```
+   **Never point a static server at the checkout.** It publishes every file
+   under it, `.env` included. See [Deployment](#deployment).
 4. **Put it behind your own domain + auth.** The admin model relies on the API
    being reachable *only* through a trusted proxy that injects the
    `Cf-Access-Authenticated-User-Email` header. The reference setup uses a
@@ -520,8 +526,17 @@ That's it — same code, your config, your data, your host.
 The reference instance runs on a Raspberry Pi behind a Cloudflare Tunnel:
 
 - `boulderdg.com/api/*` → the API container (localhost:3001)
-- `boulderdg.com/*` → the static `index.html`
+- `boulderdg.com/*` → a static server (localhost:8080) over the public folder
 - Cloudflare Access protects `/api/admin/*` with an email allowlist.
+
+**The static server serves an allowlist, never the checkout.** Whatever folder
+it runs in is published in full, and the checkout holds `.env` (database
+password, admin emails), `.git/` and the backend source. So it runs in a
+separate folder that [scripts/link-public.sh](scripts/link-public.sh) fills
+with symlinks to the files the browser needs. A file not on that list returns
+`404` until someone adds it. Verify with
+`curl -o /dev/null -w '%{http_code}'` against `/.env`: anything but a `404`
+means the server is publishing the checkout.
 
 **Every hostname that routes to the tunnel needs its own Access application.**
 `requireAdmin` trusts the `Cf-Access-Authenticated-User-Email` header and does
@@ -552,8 +567,10 @@ The two halves deploy differently, and most changes only need one of them:
   `migrate.js && seed.js && index.js`, so **deploying applies migrations
   automatically**. Keep the previous image tagged (e.g.
   `tags-app-api:rollback-<sha>`) so a rollback is one `docker tag` away.
-- **Frontend** — `index.html` is served straight off the checkout by a plain
-  static server, so **`git pull` alone ships it**: no rebuild, no restart.
+- **Frontend** — the public folder's symlinks point into the checkout, so
+  **`git pull` alone ships it**: no rebuild, no restart. The exception is a
+  change that adds a new public file: re-run `scripts/link-public.sh` after
+  pulling it, or the new file returns `404`.
 
 So check `git diff --stat <deployed-sha> origin/main` first and skip the
 rebuild entirely when nothing under `backend/` changed.
@@ -563,8 +580,9 @@ network-first, so a new `index.html` is live on the next load and the cache is
 only an offline fallback — don't bump `CACHE` reflexively on a frontend deploy.
 
 Worth verifying after any deploy: that the served `index.html` matches the
-deployed commit, and that the auth split still holds — `/api/rounds/live`
-returns `200` while `/api/admin/*` returns `302` to the Access login.
+deployed commit, that the auth split still holds — `/api/rounds/live`
+returns `200` while `/api/admin/*` returns `302` to the Access login — and that
+`/.env` returns `404`.
 
 ## License
 
