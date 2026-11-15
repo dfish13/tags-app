@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Every deployment needs these.
 PUBLIC=(index.html sw.js icon-192.png icon-512.png apple-touch-icon.png)
 # Per-deployment, and fine to be missing: the page falls back without them.
-OPTIONAL=(tag-logo-128.png)
+OPTIONAL=(tag-logo-128.png course-art)
 
 dest="${1:-}"
 if [ -z "$dest" ]; then

@@ -3,7 +3,8 @@
 // Strategy map (see fetch handler):
 //   navigations + /api/* GETs → network-first, cached copy as offline fallback
 //     (keeps deploys instantly live; cache only serves when the network fails)
-//   static assets (icons)     → cache-first
+//   the course-art manifest   → network-first, for the same reason
+//   static assets (icons, art) → cache-first
 //   /api/admin/* and /cdn-cgi/* (Cloudflare Access) are NEVER intercepted:
 //     their redirects and cookies must reach the network untouched.
 //   Non-GET requests are never intercepted — a write must never fake success.
@@ -15,6 +16,11 @@ const SHELL = ['/', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 // best-effort basis so a league without one still gets a working install —
 // addAll rejects as a unit, which would take offline support down with it.
 const OPTIONAL = ['/tag-logo-128.png'];
+// The Home banner's list of paintings. Network-first like the API, so adding or
+// dropping a painting shows up without a cache bump; the paintings themselves
+// fall through to cache-first like any other static file. Offline, a piece that
+// was never fetched fails to load and the page hides the banner.
+const ART_MANIFEST = '/course-art/art.json';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
@@ -42,7 +48,7 @@ self.addEventListener('fetch', (e) => {
   if (req.mode === 'navigate') {
     // The app is a single page — every navigation is the shell, cached as '/'.
     e.respondWith(netFirst(req, '/'));
-  } else if (url.pathname.startsWith('/api/')) {
+  } else if (url.pathname.startsWith('/api/') || url.pathname === ART_MANIFEST) {
     e.respondWith(netFirst(req));
   } else {
     e.respondWith(cacheFirst(req));

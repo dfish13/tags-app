@@ -110,6 +110,28 @@
     align-items: center;
     gap: 14px;
   }
+  /* Course art (per-deployment, see loadCourseArt). The header grows by
+     --art-extra of painting above the title and sticks at minus that much, so
+     the extra strip scrolls away and the pinned bar is the usual height. No
+     scroll listener, and nothing below it moves while it shrinks. The painting
+     sits under a wash of the primary color so the title reads on any scene,
+     and fades in once loaded rather than popping in over the plain bar. */
+  header.has-art { --art-extra: 30px; padding-top: calc(14px + var(--art-extra)); top: calc(-1 * var(--art-extra)); }
+  header.has-art::before {
+    content: ''; position: absolute; inset: 0; z-index: -1;
+    background:
+      linear-gradient(color-mix(in srgb, var(--green) 30%, transparent),
+                      color-mix(in srgb, var(--green) 78%, transparent)),
+      var(--art) var(--art-pos, center 40%) / cover;
+    opacity: 0; transition: opacity .4s ease;
+  }
+  header.art-ready::before { opacity: 1; }
+  header.art-ready h1, header.art-ready .sub {
+    text-shadow: 0 1px 3px color-mix(in srgb, var(--green) 70%, black);
+  }
+  /* The painting would cover the live round's neon underline (an inset
+     shadow, which paints beneath the header's own children). */
+  body.live header.has-art::before { bottom: 3px; }
   header .head-main { min-width: 0; }
   header h1 {
     margin: 0; font-size: 19px; font-weight: 700;
@@ -174,7 +196,7 @@
   body.drawer-open .drawer { transform: none; visibility: visible; }
   body.drawer-open { overflow: hidden; }
   @media (prefers-reduced-motion: reduce) {
-    .scrim, .drawer { transition: none; }
+    .scrim, .drawer, header::before { transition: none; }
   }
 
   .drawer-head {
@@ -219,6 +241,7 @@
     font-size: 11px; color: var(--muted);
     padding: 0 12px 6px; word-break: break-all;
   }
+  .drawer-credit { font-size: 11px; color: var(--muted); padding: 0 12px 6px; }
 
   /* Back out of scoring, to the players. The round is a two-step wizard, so
      this is the only way back — there is no tab strip to click. */
@@ -974,6 +997,8 @@
   <div class="drawer-foot">
     <button class="drawer-admin" id="nav-admin" onclick="drawerGo('#/admin')">Admin</button>
     <div class="drawer-who" id="drawerWho"></div>
+    <!-- Credit for the header's course art, from its manifest. -->
+    <div class="drawer-credit" id="artCredit" hidden></div>
   </div>
 </nav>
 <main>
@@ -6484,8 +6509,46 @@ function refreshHomeLive() {
   if (route === 'home' && navigator.onLine) loadLiveRounds();
 }
 
+// Header course art. course-art/art.json is per-deployment and usually
+// absent; any failure leaves the plain header.
+//   { "credit": "Header art: watercolors by …",
+//     "pieces": [{ "src": "hole-1.jpg", "position": "center 40%" }] }
+// `position` is optional, a CSS background-position choosing which part of
+// the scene the short, wide bar shows. One piece per page load, not per view:
+// a different painting on every tap would be noise, not character.
+async function loadCourseArt() {
+  try {
+    const res = await fetch('/course-art/art.json');
+    if (!res.ok) return;
+    const art = await res.json();
+    // Bare filenames only: the manifest names files in its own folder. That
+    // also keeps quotes and parens out of the url() below.
+    const pieces = (Array.isArray(art.pieces) ? art.pieces : [])
+      .filter(p => p && /^[\w.-]+$/.test(p.src || '') && !p.src.startsWith('.'));
+    if (!pieces.length) return;
+    const p = pieces[Math.floor(Math.random() * pieces.length)];
+    const src = '/course-art/' + p.src;
+    const head = document.querySelector('header');
+    head.style.setProperty('--art', `url("${src}")`);
+    if (typeof p.position === 'string') head.style.setProperty('--art-pos', p.position);
+    // Grow the header now, while the page is still loading, rather than when
+    // the image lands and the standings are already on screen under it.
+    head.classList.add('has-art');
+    const img = new Image();
+    img.onload = () => head.classList.add('art-ready');
+    img.onerror = () => head.classList.remove('has-art');
+    img.src = src;
+    if (art.credit) {
+      const credit = document.getElementById('artCredit');
+      credit.textContent = String(art.credit);
+      credit.hidden = false;
+    }
+  } catch { /* the plain header is the default look */ }
+}
+
 loadConfig();
 loadBanner();
+loadCourseArt();
 
 // Stored mid-round but already finalized: the phone was shut before the poll
 // that would have carried it out of the round, or it was last open under a
