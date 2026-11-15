@@ -303,6 +303,37 @@ scoring on the Stats page — that is the point to promote it to a real table
 with a foreign key from `rounds`. Until then the derived list carries no schema
 cost.
 
+### Course art
+
+Home can show a painting of the league's course above the standings: one piece
+picked at random per page load, shown whole with an optional credit line. It is
+per-deployment, like the header mark, and **gitignored**. The artwork is the
+league's own, and often someone else's work, so it never goes in the repo. A
+deployment with no `course-art/` folder simply gets no banner.
+
+Drop the images in `course-art/` at the repo root, next to a manifest:
+
+```json
+{
+  "credit": "Watercolors by A. Painter",
+  "pieces": [
+    { "src": "hole-1.jpg", "alt": "Watercolor of hole 1", "width": 1200, "height": 717 }
+  ]
+}
+```
+
+- `src` is a bare filename inside `course-art/`.
+- `width`/`height` are optional, but give them. With them the banner reserves
+  its space straight away; without them it waits for the image to load rather
+  than pushing the standings down late.
+- About 1200px wide is plenty. The banner is never wider than the 640px column.
+
+Then re-run `scripts/link-public.sh` so the folder is served (see
+[Deployment](#deployment)). The manifest is fetched network-first, so adding or
+removing a piece shows up on the next load. The images are cached by the
+service worker, so **give a changed image a new filename** rather than
+overwriting one.
+
 ## Running locally
 
 ### The test stack (one command)

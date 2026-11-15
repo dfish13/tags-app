@@ -238,6 +238,23 @@
     margin-bottom: 14px;
   }
   .card h2 { margin: 0 0 10px; font-size: 16px; }
+
+  /* Shown whole, never cropped: the paintings carry their own lettering and
+     dates, and cropping to a banner strip would cut the artist's work. A
+     painted page is mostly white paper, which on a dark theme is the
+     brightest thing on screen — applyTheme() sets --art-dim to take it down. */
+  .course-art {
+    margin: 0 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .course-art img {
+    display: block; width: 100%; height: auto;
+    filter: brightness(var(--art-dim, 1));
+  }
+  .course-art figcaption { font-size: 12px; color: var(--muted); padding: 6px 10px; }
   /* A card heading with a control beside it, rather than stacked above it —
      a two-word title leaves most of that line empty anyway. */
   .card-head {
@@ -930,6 +947,14 @@
       <h2 id="liveCardTitle">Live round</h2>
       <div id="liveCardBody"></div>
     </div>
+
+    <!-- Artwork of the league's course, per-deployment like the header mark:
+         a league with no course-art/ folder gets no banner. Below the live
+         card, because a round in progress is what someone opened Home for. -->
+    <figure class="course-art" id="courseArt" hidden>
+      <img id="courseArtImg" alt="" decoding="async">
+      <figcaption id="courseArtCredit" hidden></figcaption>
+    </figure>
 
     <div class="card">
       <h2>Current tag standings</h2>
@@ -5759,6 +5784,7 @@ function applyTheme(t) {
     // generic --text, so a link button still reads as the league's color.
     set('--primary-ink', lighten(t.primary || '#042a2b', 0.45));
     set('--danger-ink', lighten('#c0392b', 0.35));
+    set('--art-dim', '0.82');
     // The live panel's trick is being the most distinct surface on the page. On
     // a light theme near-black does that by itself; on a dark theme it collapses
     // into the background (measured ~1.0:1) and the neon rim ends up carrying
@@ -5836,7 +5862,44 @@ function refreshHomeLive() {
   if (route === 'home' && navigator.onLine) loadLiveRounds();
 }
 
+// Home banner artwork. course-art/art.json is per-deployment and usually
+// absent; any failure just leaves the banner hidden.
+//   { "credit": "Watercolors by …",
+//     "pieces": [{ "src": "hole-1.jpg", "alt": "…", "width": 1200, "height": 717 }] }
+// One piece per page load rather than per visit to Home: swapping it every
+// time someone taps back would move the standings under their thumb.
+async function loadCourseArt() {
+  try {
+    const res = await fetch('/course-art/art.json');
+    if (!res.ok) return;
+    const art = await res.json();
+    // Bare filenames only: the manifest names files in its own folder.
+    const pieces = (Array.isArray(art.pieces) ? art.pieces : [])
+      .filter(p => p && /^[\w.-]+$/.test(p.src || '') && !p.src.startsWith('.'));
+    if (!pieces.length) return;
+    const p = pieces[Math.floor(Math.random() * pieces.length)];
+    const fig = document.getElementById('courseArt');
+    const img = document.getElementById('courseArtImg');
+    img.onerror = () => { fig.hidden = true; };
+    img.alt = String(p.alt || '');
+    // With its size known, the banner takes its space now, before the
+    // standings load under it; without, it waits for the image instead of
+    // arriving late and shoving the list down.
+    const sized = p.width > 0 && p.height > 0;
+    if (sized) { img.width = p.width; img.height = p.height; }
+    else img.onload = () => { fig.hidden = false; };
+    img.src = '/course-art/' + p.src;
+    if (art.credit) {
+      const cap = document.getElementById('courseArtCredit');
+      cap.textContent = String(art.credit);
+      cap.hidden = false;
+    }
+    if (sized) fig.hidden = false;
+  } catch { /* no artwork is the default look */ }
+}
+
 loadConfig();
+loadCourseArt();
 
 // Stored mid-round but already finalized: the phone was shut before the poll
 // that would have carried it out of the round, or it was last open under a
