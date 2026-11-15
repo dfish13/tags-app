@@ -305,28 +305,33 @@ cost.
 
 ### Course art
 
-Home can show a painting of the league's course above the standings: one piece
-picked at random per page load, shown whole with an optional credit line. It is
-per-deployment, like the header mark, and **gitignored**. The artwork is the
-league's own, and often someone else's work, so it never goes in the repo. A
-deployment with no `course-art/` folder simply gets no banner.
+The header can carry a painting of the league's course behind the league name:
+one piece picked at random per page load, under a wash of the primary color so
+the title stays readable. The bar is taller at the top of the page and shrinks
+to its usual height as you scroll, so the art costs no room while reading. An
+optional credit line goes in the menu footer.
+
+It is per-deployment, like the header mark, and **gitignored**. The artwork is
+the league's own, and often someone else's work, so it never goes in the repo.
+A deployment with no `course-art/` folder keeps the plain header.
 
 Drop the images in `course-art/` at the repo root, next to a manifest:
 
 ```json
 {
-  "credit": "Watercolors by A. Painter",
+  "credit": "Header art: watercolors by A. Painter",
   "pieces": [
-    { "src": "hole-1.jpg", "alt": "Watercolor of hole 1", "width": 1200, "height": 717 }
+    { "src": "hole-1.jpg", "position": "center 40%" }
   ]
 }
 ```
 
 - `src` is a bare filename inside `course-art/`.
-- `width`/`height` are optional, but give them. With them the banner reserves
-  its space straight away; without them it waits for the image to load rather
-  than pushing the standings down late.
-- About 1200px wide is plenty. The banner is never wider than the 640px column.
+- `position` is optional: a CSS `background-position` choosing which part of
+  the scene shows. The bar is short and wide, so most of each picture is
+  cropped away; aim it at the horizon or the basket.
+- Crop to the scene itself. Lettering, borders or white paper end up as stripes
+  across the bar. Around 1200px wide is plenty.
 
 Then re-run `scripts/link-public.sh` so the folder is served (see
 [Deployment](#deployment)). The manifest is fetched network-first, so adding or

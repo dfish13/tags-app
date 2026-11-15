@@ -18,6 +18,6 @@ Thumbs.db
 # Claude Code local settings (keep launch.json, ignore local overrides)
 .claude/settings.local.json
 
-# Per-deployment course artwork for the Home banner (see README "Course art").
+# Per-deployment course artwork for the header (see README "Course art").
 # It is the league's own, often someone else's work, and never belongs in the repo.
 course-art/

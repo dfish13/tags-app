@@ -110,6 +110,28 @@
     align-items: center;
     gap: 14px;
   }
+  /* Course art (per-deployment, see loadCourseArt). The header grows by
+     --art-extra of painting above the title and sticks at minus that much, so
+     the extra strip scrolls away and the pinned bar is the usual height. No
+     scroll listener, and nothing below it moves while it shrinks. The painting
+     sits under a wash of the primary color so the title reads on any scene,
+     and fades in once loaded rather than popping in over the plain bar. */
+  header.has-art { --art-extra: 30px; padding-top: calc(14px + var(--art-extra)); top: calc(-1 * var(--art-extra)); }
+  header.has-art::before {
+    content: ''; position: absolute; inset: 0; z-index: -1;
+    background:
+      linear-gradient(color-mix(in srgb, var(--green) 30%, transparent),
+                      color-mix(in srgb, var(--green) 78%, transparent)),
+      var(--art) var(--art-pos, center 40%) / cover;
+    opacity: 0; transition: opacity .4s ease;
+  }
+  header.art-ready::before { opacity: 1; }
+  header.art-ready h1, header.art-ready .sub {
+    text-shadow: 0 1px 3px color-mix(in srgb, var(--green) 70%, black);
+  }
+  /* The painting would cover the live round's neon underline (an inset
+     shadow, which paints beneath the header's own children). */
+  body.live header.has-art::before { bottom: 3px; }
   header .head-main { min-width: 0; }
   header h1 {
     margin: 0; font-size: 19px; font-weight: 700;
@@ -174,7 +196,7 @@
   body.drawer-open .drawer { transform: none; visibility: visible; }
   body.drawer-open { overflow: hidden; }
   @media (prefers-reduced-motion: reduce) {
-    .scrim, .drawer { transition: none; }
+    .scrim, .drawer, header::before { transition: none; }
   }
 
   .drawer-head {
@@ -219,6 +241,7 @@
     font-size: 11px; color: var(--muted);
     padding: 0 12px 6px; word-break: break-all;
   }
+  .drawer-credit { font-size: 11px; color: var(--muted); padding: 0 12px 6px; }
 
   /* Back out of scoring, to the players. The round is a two-step wizard, so
      this is the only way back — there is no tab strip to click. */
@@ -238,23 +261,6 @@
     margin-bottom: 14px;
   }
   .card h2 { margin: 0 0 10px; font-size: 16px; }
-
-  /* Shown whole, never cropped: the paintings carry their own lettering and
-     dates, and cropping to a banner strip would cut the artist's work. A
-     painted page is mostly white paper, which on a dark theme is the
-     brightest thing on screen — applyTheme() sets --art-dim to take it down. */
-  .course-art {
-    margin: 0 0 14px;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    overflow: hidden;
-    background: var(--card);
-  }
-  .course-art img {
-    display: block; width: 100%; height: auto;
-    filter: brightness(var(--art-dim, 1));
-  }
-  .course-art figcaption { font-size: 12px; color: var(--muted); padding: 6px 10px; }
   /* A card heading with a control beside it, rather than stacked above it —
      a two-word title leaves most of that line empty anyway. */
   .card-head {
@@ -934,6 +940,8 @@
   <div class="drawer-foot">
     <button class="drawer-admin" id="nav-admin" onclick="drawerGo('#/admin')">Admin</button>
     <div class="drawer-who" id="drawerWho"></div>
+    <!-- Credit for the header's course art, from its manifest. -->
+    <div class="drawer-credit" id="artCredit" hidden></div>
   </div>
 </nav>
 <main>
@@ -947,14 +955,6 @@
       <h2 id="liveCardTitle">Live round</h2>
       <div id="liveCardBody"></div>
     </div>
-
-    <!-- Artwork of the league's course, per-deployment like the header mark:
-         a league with no course-art/ folder gets no banner. Below the live
-         card, because a round in progress is what someone opened Home for. -->
-    <figure class="course-art" id="courseArt" hidden>
-      <img id="courseArtImg" alt="" decoding="async">
-      <figcaption id="courseArtCredit" hidden></figcaption>
-    </figure>
 
     <div class="card">
       <h2>Current tag standings</h2>
@@ -5784,7 +5784,6 @@ function applyTheme(t) {
     // generic --text, so a link button still reads as the league's color.
     set('--primary-ink', lighten(t.primary || '#042a2b', 0.45));
     set('--danger-ink', lighten('#c0392b', 0.35));
-    set('--art-dim', '0.82');
     // The live panel's trick is being the most distinct surface on the page. On
     // a light theme near-black does that by itself; on a dark theme it collapses
     // into the background (measured ~1.0:1) and the neon rim ends up carrying
@@ -5862,40 +5861,41 @@ function refreshHomeLive() {
   if (route === 'home' && navigator.onLine) loadLiveRounds();
 }
 
-// Home banner artwork. course-art/art.json is per-deployment and usually
-// absent; any failure just leaves the banner hidden.
-//   { "credit": "Watercolors by …",
-//     "pieces": [{ "src": "hole-1.jpg", "alt": "…", "width": 1200, "height": 717 }] }
-// One piece per page load rather than per visit to Home: swapping it every
-// time someone taps back would move the standings under their thumb.
+// Header course art. course-art/art.json is per-deployment and usually
+// absent; any failure leaves the plain header.
+//   { "credit": "Header art: watercolors by …",
+//     "pieces": [{ "src": "hole-1.jpg", "position": "center 40%" }] }
+// `position` is optional, a CSS background-position choosing which part of
+// the scene the short, wide bar shows. One piece per page load, not per view:
+// a different painting on every tap would be noise, not character.
 async function loadCourseArt() {
   try {
     const res = await fetch('/course-art/art.json');
     if (!res.ok) return;
     const art = await res.json();
-    // Bare filenames only: the manifest names files in its own folder.
+    // Bare filenames only: the manifest names files in its own folder. That
+    // also keeps quotes and parens out of the url() below.
     const pieces = (Array.isArray(art.pieces) ? art.pieces : [])
       .filter(p => p && /^[\w.-]+$/.test(p.src || '') && !p.src.startsWith('.'));
     if (!pieces.length) return;
     const p = pieces[Math.floor(Math.random() * pieces.length)];
-    const fig = document.getElementById('courseArt');
-    const img = document.getElementById('courseArtImg');
-    img.onerror = () => { fig.hidden = true; };
-    img.alt = String(p.alt || '');
-    // With its size known, the banner takes its space now, before the
-    // standings load under it; without, it waits for the image instead of
-    // arriving late and shoving the list down.
-    const sized = p.width > 0 && p.height > 0;
-    if (sized) { img.width = p.width; img.height = p.height; }
-    else img.onload = () => { fig.hidden = false; };
-    img.src = '/course-art/' + p.src;
+    const src = '/course-art/' + p.src;
+    const head = document.querySelector('header');
+    head.style.setProperty('--art', `url("${src}")`);
+    if (typeof p.position === 'string') head.style.setProperty('--art-pos', p.position);
+    // Grow the header now, while the page is still loading, rather than when
+    // the image lands and the standings are already on screen under it.
+    head.classList.add('has-art');
+    const img = new Image();
+    img.onload = () => head.classList.add('art-ready');
+    img.onerror = () => head.classList.remove('has-art');
+    img.src = src;
     if (art.credit) {
-      const cap = document.getElementById('courseArtCredit');
-      cap.textContent = String(art.credit);
-      cap.hidden = false;
+      const credit = document.getElementById('artCredit');
+      credit.textContent = String(art.credit);
+      credit.hidden = false;
     }
-    if (sized) fig.hidden = false;
-  } catch { /* no artwork is the default look */ }
+  } catch { /* the plain header is the default look */ }
 }
 
 loadConfig();
